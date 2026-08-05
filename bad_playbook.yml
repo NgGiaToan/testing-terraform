@@ -1,0 +1,30 @@
+---
+- name: Bad playbook for testing scanners
+  hosts: all
+  become: yes
+
+  vars:
+    db_password: "SuperSecretPassword123!"
+    api_key: "AKIAIOSFODNN7EXAMPLE"
+
+  tasks:
+    - name: Download something insecurely
+      get_url:
+        url: http://example.com/install.sh
+        dest: /tmp/install.sh
+        mode: 0777
+
+    - name: Run downloaded script as root
+      shell: sh /tmp/install.sh
+
+    - name: Open firewall to the world
+      command: ufw allow from 0.0.0.0/0 to any port 22
+
+    - name: Create user with hardcoded password
+      user:
+        name: admin
+        password: "{{ db_password }}"
+
+    - name: Unused variable never referenced elsewhere
+      debug:
+        msg: "just here for the unused var check"

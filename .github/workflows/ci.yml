@@ -39,7 +39,7 @@ jobs:
 
   sonarqube:
     runs-on: ubuntu-latest
-    if: ${{ false }}  # flip to true once SONAR_TOKEN / SONAR_HOST_URL secrets are set
+    if: ${{ true }}  # flip to true once SONAR_TOKEN / SONAR_HOST_URL secrets are set
     needs: [tflint, snyk-iac]
     steps:
       - uses: actions/checkout@v4

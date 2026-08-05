@@ -1,0 +1,10 @@
+---
+- name: Dummy check for testing GitHub Actions (tflint, snyk, sonarqube)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Say hello
+      debug:
+        msg: "tflint, snyk, sonarqube test run"
