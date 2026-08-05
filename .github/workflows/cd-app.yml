@@ -1,0 +1,155 @@
+name: CD - promote one app (dev -> prod)
+
+# Called once per app, in parallel, from ci.yml's `cd` matrix job — never runs on its
+# own trigger. Everything here is parameterized by `inputs.app` (e.g. "admin", "cus001")
+# so adding a new app never means adding a new job block here or in ci.yml: it only means
+# creating environment/dev-<app>/ and environment/prod-<app>/ with their own backend key,
+# and the matching GitHub Environments (dev-<app>, prod-<app>) in repo settings.
+on:
+  workflow_call:
+    inputs:
+      app:
+        required: true
+        type: string
+
+jobs:
+  terraform-apply-dev:
+    runs-on: ubuntu-latest
+    environment: dev-${{ inputs.app }}
+    # dev-<app> is its own real Terraform state (its own S3 backend key, so a separate
+    # state file/lock item from every other environment). Merges landing close together
+    # each start their own workflow run, so two runs could still apply this same dev-<app>
+    # state at once without this: the concurrency group queues them instead of racing.
+    concurrency:
+      group: terraform-apply-dev-${{ inputs.app }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: environment/dev-${{ inputs.app }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-apply
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Apply
+        run: terraform apply -no-color -auto-approve
+
+  terraform-plan-prod:
+    runs-on: ubuntu-latest
+    needs: [terraform-apply-dev]
+    # No `environment:` on this job on purpose — the only real environments for this app
+    # are dev-<app> and prod-<app>. This job has to run and post its plan to the job
+    # summary *before* the prod-<app> approval gate, not after it, so it must never be
+    # tied to a (possibly gated) GitHub Environment itself.
+    concurrency:
+      group: terraform-plan-prod-${{ inputs.app }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: environment/prod-${{ inputs.app }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        run: terraform plan -no-color -out=tfplan
+
+      - name: Show plan (human-readable)
+        run: terraform show -no-color tfplan | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload plan for the apply job
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-${{ inputs.app }}-tfplan
+          path: environment/prod-${{ inputs.app }}/tfplan
+          retention-days: 1
+
+  terraform-apply-prod:
+    runs-on: ubuntu-latest
+    needs: [terraform-plan-prod]
+    environment: prod-${{ inputs.app }}
+    # The approval gate here reviews the exact plan terraform-plan-prod produced (see its
+    # job summary) and this job applies that same saved plan file — it does not regenerate
+    # a plan, so what gets approved is guaranteed to be what gets applied. The concurrency
+    # group queues same-environment runs instead of racing.
+    concurrency:
+      group: terraform-apply-prod-${{ inputs.app }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+      actions: write
+    defaults:
+      run:
+        working-directory: environment/prod-${{ inputs.app }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-apply
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Download reviewed plan
+        uses: actions/download-artifact@v4
+        with:
+          name: prod-${{ inputs.app }}-tfplan
+          path: environment/prod-${{ inputs.app }}
+
+      - name: Terraform Apply
+        run: terraform apply -no-color tfplan
+
+      # Any other run still sitting in "Waiting" for this same prod-<app> approval is now
+      # stale — this apply just moved that app's prod state past it, so approving it later
+      # would only hit Terraform's own "Saved plan is stale" error. Cancel those runs now
+      # instead of leaving them to confuse an approver later.
+      - name: Cancel other runs waiting on this app's prod approval
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_ENVIRONMENT: prod-${{ inputs.app }}
+        run: |
+          for run_id in $(gh api "repos/${{ github.repository }}/actions/runs?status=waiting" --jq '.workflow_runs[].id'); do
+            if [ "$run_id" = "${{ github.run_id }}" ]; then
+              continue
+            fi
+            is_match=$(gh api "repos/${{ github.repository }}/actions/runs/$run_id/pending_deployments" --jq '.[].environment.name' | grep -xqF "$APP_ENVIRONMENT" && echo yes || echo no)
+            if [ "$is_match" = "yes" ]; then
+              echo "Cancelling run $run_id — superseded, still waiting on $APP_ENVIRONMENT approval"
+              gh api -X POST "repos/${{ github.repository }}/actions/runs/$run_id/cancel"
+            fi
+          done

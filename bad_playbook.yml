@@ -1,30 +1,30 @@
 ---
-- name: Bad playbook for testing scanners
+- name: Playbook with code smells for testing scanners
   hosts: all
-  become: yes
-
-  vars:
-    db_password: "SuperSecretPassword123!"
-    api_key: "AKIAIOSFODNN7EXAMPLE"
 
   tasks:
-    - name: Download something insecurely
-      get_url:
-        url: http://example.com/install.sh
-        dest: /tmp/install.sh
-        mode: 0777
+    - name: Create app directory a
+      file:
+        path: /opt/app_a
+        state: directory
+        mode: "0755"
 
-    - name: Run downloaded script as root
-      shell: sh /tmp/install.sh
+    - name: Create app directory b
+      file:
+        path: /opt/app_b
+        state: directory
+        mode: "0755"
 
-    - name: Open firewall to the world
-      command: ufw allow from 0.0.0.0/0 to any port 22
+    - name: Create app directory c
+      file:
+        path: /opt/app_c
+        state: directory
+        mode: "0755"
 
-    - name: Create user with hardcoded password
-      user:
-        name: admin
-        password: "{{ db_password }}"
+    # TODO: collapse these three duplicated tasks into a loop with a list of paths
+    # TODO: revisit directory layout later
+    # FIXME: copy-pasted three times, needs a with_items/loop refactor
 
-    - name: Unused variable never referenced elsewhere
+    - name: Print completion message
       debug:
-        msg: "just here for the unused var check"
+        msg: "app directories created"

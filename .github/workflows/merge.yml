@@ -1,0 +1,38 @@
+name: Merge to Main - Build & Deploy
+
+# Runs on every push to main: re-runs the shared checks (checks.yml) against the merged
+# commit, then fans out to one dev->prod promotion per app that actually changed
+# (cd-app.yml, via the `cd` matrix job).
+on:
+  push:
+    branches: [main]
+
+jobs:
+  checks:
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+      security-events: write
+    uses: ./.github/workflows/checks.yml
+    secrets: inherit
+
+  # One matrix leg per app that actually changed, each promoted dev -> prod by the
+  # reusable workflow in cd-app.yml. Adding a new app (cus002, ...) needs no new job here:
+  # `checks.outputs.apps` already picks it up automatically once its directories exist —
+  # see "Path-based change detection" in CI-FLOW.md.
+  cd:
+    needs: [checks]
+    if: needs.checks.outputs.apps != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.checks.outputs.apps) }}
+    permissions:
+      contents: read
+      id-token: write
+      actions: write
+    uses: ./.github/workflows/cd-app.yml
+    with:
+      app: ${{ matrix.app }}
+    secrets: inherit
