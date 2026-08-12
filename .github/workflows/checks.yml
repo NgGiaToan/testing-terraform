@@ -211,43 +211,41 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v4
+        uses: terraform-linters/setup-tflint@90f302c255ef959cbfb4bd10581afecdb7ece3e6 # v4.1.1
         with:
-          tflint_version: latest
+          tflint_version: v0.64.0
 
       - name: Init TFLint
         run: tflint --init
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-      - name: Run TFLint (SARIF)
-        id: tflint_sarif
-        run: tflint --recursive -f sarif > tflint-results.sarif
+      # SARIF + code scanning upload needs GitHub Advanced Security, which isn't available
+      # on this (private) repo without a GHAS license — so findings go to the job summary
+      # instead, which needs no special license or permissions.
+      - name: Run TFLint
+        id: tflint
         continue-on-error: true
+        run: tflint --recursive --format compact 2>&1 | tee tflint-output.txt
 
-      - name: Upload SARIF results
-        uses: github/codeql-action/upload-sarif@v3
-        continue-on-error: true
-        with:
-          sarif_file: tflint-results.sarif
-
-      - name: Show TFLint findings and fail
-        if: steps.tflint_sarif.outcome == 'failure'
+      - name: Publish TFLint results to job summary
+        if: always()
         run: |
-          if [ -s tflint-results.sarif ]; then
-            jq -r '
-              .runs[].results[]
-              | "\(.level // "error"): \(.ruleId) — \(.message.text) (\(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine))"
-            ' tflint-results.sarif
-          else
-            echo "tflint failed before producing a valid SARIF file (likely a crash, not a lint finding)."
-          fi
-          exit 1
+          {
+            echo "## TFLint Results"
+            echo
+            echo '```'
+            cat tflint-output.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if TFLint found issues
+        if: steps.tflint.outcome == 'failure'
+        run: exit 1
 
   ansible-lint:
     runs-on: ubuntu-latest
@@ -256,10 +254,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run ansible-lint
-        uses: ansible/ansible-lint@main
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          path: "ansible/"
+          python-version: "3.x"
+
+      - name: Install ansible-lint
+        run: pip install ansible ansible-lint
+
+      # Run directly (instead of the ansible/ansible-lint marketplace action) so the
+      # output can be captured and published to the job summary.
+      - name: Run ansible-lint
+        id: ansible_lint
+        continue-on-error: true
+        working-directory: ansible/
+        run: ansible-lint --nocolor 2>&1 | tee ansible-lint-output.txt
+
+      - name: Publish ansible-lint results to job summary
+        if: always()
+        run: |
+          {
+            echo "## Ansible Lint Results"
+            echo
+            echo '```'
+            cat ansible/ansible-lint-output.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if ansible-lint found issues
+        if: steps.ansible_lint.outcome == 'failure'
+        run: exit 1
 
   snyk-iac:
     runs-on: ubuntu-latest
