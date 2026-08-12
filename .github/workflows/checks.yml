@@ -1,0 +1,287 @@
+name: Shared Checks (Lint, Security, Plan)
+
+# Reusable workflow shared by pr.yml (every PR) and merge.yml (every push to main), so the
+# checks that both flows need — lint, security scans, and the dev-tier preview plan —
+# are written once instead of duplicated in two trigger files.
+#
+# `github.event_name` inside a called reusable workflow reflects whichever event triggered
+# the CALLER (pull_request or push), not "workflow_call" — so the PR-only steps below
+# (e.g. posting PR comments) still work correctly no matter which file calls this.
+on:
+  workflow_call:
+    outputs:
+      apps:
+        description: "JSON array of app names touched by this diff, e.g. [\"admin\",\"cus001\"]"
+        value: ${{ jobs.changes.outputs.apps }}
+      dev_matrix:
+        description: "JSON array of dev-<app> directory names touched by this diff"
+        value: ${{ jobs.changes.outputs.dev_matrix }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      apps: ${{ steps.apps.outputs.apps }}
+      dev_matrix: ${{ steps.apps.outputs.dev_matrix }}
+    steps:
+      # Lists changed files under environment/** — not which named app changed. Naming
+      # apps explicitly here (admin/cus001/...) is exactly what we're avoiding: adding
+      # cus002 later would mean coming back to add a filter entry for it too.
+      - name: List changed files under environment/
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          list-files: json
+          filters: |
+            env:
+              - 'environment/**'
+
+      # Derives which app(s) changed straight from the changed file paths (an app is
+      # whatever comes after "dev-" or "prod-" in environment/<tier>-<app>/...), instead
+      # of a hardcoded per-app filter list. Adding a new app (e.g. cus002) needs no change
+      # here or anywhere else in this repo's CI config: as soon as environment/dev-cus002/**
+      # or environment/prod-cus002/** shows up in a diff, it's picked up automatically —
+      # the only requirement is that its directories follow the dev-<app>/prod-<app> naming
+      # convention. `dev-bootstrap` is excluded on purpose: it has no prod counterpart and
+      # is applied manually, never promoted through this pipeline.
+      #
+      # Changed file paths come from the diff itself (an attacker who opens a PR controls
+      # what paths appear here), so ENV_FILES is passed through `env:` and read as a shell
+      # variable rather than interpolated with ${{ }} straight into the script — otherwise
+      # a maliciously crafted file path could break out of the intended command.
+      - name: Derive changed app(s) from paths
+        id: apps
+        env:
+          ENV_FILES: ${{ steps.filter.outputs.env_files }}
+        run: |
+          apps=$(echo "$ENV_FILES" \
+            | jq -r '.[]' \
+            | grep -oP 'environment/(dev|prod)-\K[^/]+' \
+            | grep -vx 'bootstrap' \
+            | sort -u \
+            | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "apps=$apps" >> "$GITHUB_OUTPUT"
+
+          dev_matrix=$(echo "$apps" | jq -c 'map("dev-" + .)')
+          echo "dev_matrix=$dev_matrix" >> "$GITHUB_OUTPUT"
+
+  terraform-plan:
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.dev_matrix != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        env: ${{ fromJSON(needs.changes.outputs.dev_matrix) }}
+    # No `environment:` on this job on purpose — it runs on every PR from every feature
+    # branch, not just main, so it must never be tied to a GitHub Environment that could
+    # gate it (required reviewers or a branch policy). Each app only has two real
+    # environments (dev-<app>, prod-<app>); this job just previews against dev-<app>'s
+    # state without claiming that environment for itself.
+    #
+    # This previews against environment/<env>/'s own state (its own S3 backend key) —
+    # every PR and every push to main shares that one preview state per env, so two
+    # plans running at once don't corrupt it (plan doesn't write), but they do race for
+    # the same DynamoDB lock item and can fail each other. Queue them instead of racing
+    # — cancel-in-progress: false so no PR's plan gets dropped.
+    concurrency:
+      group: terraform-plan-${{ matrix.env }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    defaults:
+      run:
+        working-directory: environment/${{ matrix.env }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Format Check
+        id: fmt
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate -no-color
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -no-color -out=tfplan
+        continue-on-error: true
+
+      - name: Terraform Show (JSON, for formatting/summary)
+        run: terraform show -no-color -json tfplan > tfplan.json
+
+      - name: Terraform Show (human-readable text)
+        id: show
+        run: terraform show -no-color tfplan
+
+      - name: Build readable plan tree
+        id: tree
+        run: |
+          {
+            echo "tree<<EOF"
+            TOTAL=$(jq '.resource_changes | length' tfplan.json)
+            echo "**Plan (${{ matrix.env }}): ${TOTAL} resource(s) affected**"
+            echo ""
+
+            echo "➕ Create"
+            jq -r '.resource_changes[] | select(.change.actions == ["create"]) | "- `\(.address)`"' tfplan.json
+            echo ""
+
+            echo "🔄 Update"
+            i=0
+            for addr in $(jq -r '.resource_changes[] | select(.change.actions == ["update"]) | .address' tfplan.json); do
+              echo "- \`$addr\`"
+              i=$((i + 1))
+              BEFORE_FILE="/tmp/before_${i}.json"
+              AFTER_FILE="/tmp/after_${i}.json"
+              jq --arg a "$addr" '(.resource_changes[] | select(.address == $a) | .change.before) // {}' tfplan.json | jq -S . > "$BEFORE_FILE"
+              jq --arg a "$addr" '(.resource_changes[] | select(.address == $a) | .change.after) // {}' tfplan.json | jq -S . > "$AFTER_FILE"
+              diff -u "$BEFORE_FILE" "$AFTER_FILE" | grep -E '^[+-][^+-]' | sed 's/^/    /'
+              rm -f "$BEFORE_FILE" "$AFTER_FILE"
+            done
+            echo ""
+
+            echo "♻️ Replace"
+            jq -r '.resource_changes[] | select(.change.actions == ["delete","create"]) | "- `\(.address)`"' tfplan.json
+            echo ""
+
+            echo "➖ Destroy"
+            jq -r '.resource_changes[] | select(.change.actions == ["delete"]) | "- `\(.address)`"' tfplan.json
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comment plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          ENV_NAME: "${{ matrix.env }}"
+          PLAN: "${{ steps.show.outputs.stdout }}"
+          TREE: "${{ steps.tree.outputs.tree }}"
+          FMT_OUTCOME: "${{ steps.fmt.outcome }}"
+          PLAN_OUTCOME: "${{ steps.plan.outcome }}"
+        with:
+          script: |
+            const output = `### Terraform Plan — ${process.env.ENV_NAME}
+            #### Terraform Format: \`${process.env.FMT_OUTCOME}\`
+            #### Terraform Plan: \`${process.env.PLAN_OUTCOME}\`
+
+            \`\`\`
+            ${process.env.TREE}
+            \`\`\`
+
+            <details><summary>Show full plan</summary>
+
+            \`\`\`terraform
+            ${process.env.PLAN}
+            \`\`\`
+
+            </details>`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+      - name: Fail if plan or format failed
+        if: steps.fmt.outcome == 'failure' || steps.plan.outcome == 'failure'
+        run: exit 1
+
+  tflint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: Init TFLint
+        run: tflint --init
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Run TFLint (SARIF)
+        id: tflint_sarif
+        run: tflint --recursive -f sarif > tflint-results.sarif
+        continue-on-error: true
+
+      - name: Upload SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        continue-on-error: true
+        with:
+          sarif_file: tflint-results.sarif
+
+      - name: Show TFLint findings and fail
+        if: steps.tflint_sarif.outcome == 'failure'
+        run: |
+          if [ -s tflint-results.sarif ]; then
+            jq -r '
+              .runs[].results[]
+              | "\(.level // "error"): \(.ruleId) — \(.message.text) (\(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine))"
+            ' tflint-results.sarif
+          else
+            echo "tflint failed before producing a valid SARIF file (likely a crash, not a lint finding)."
+          fi
+          exit 1
+
+  ansible-lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ansible-lint
+        uses: ansible/ansible-lint@main
+        with:
+          path: "ansible/"
+
+  snyk-iac:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Snyk IaC scan
+        uses: snyk/actions/iac@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=medium
+
+  sonarqube:
+    runs-on: ubuntu-latest
+    needs: [tflint, snyk-iac]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v2
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

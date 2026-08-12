@@ -1,0 +1,30 @@
+---
+- name: Playbook with code smells for testing scanners
+  hosts: all
+
+  tasks:
+    - name: Create app directory a
+      file:
+        path: /opt/app_a
+        state: directory
+        mode: "0755"
+
+    - name: Create app directory b
+      file:
+        path: /opt/app_b
+        state: directory
+        mode: "0755"
+
+    - name: Create app directory c
+      file:
+        path: /opt/app_c
+        state: directory
+        mode: "0755"
+
+    # TODO: collapse these three duplicated tasks into a loop with a list of paths
+    # TODO: revisit directory layout later
+    # FIXME: copy-pasted three times, needs a with_items/loop refactor
+
+    - name: Print completion message
+      debug:
+        msg: "app directories created"
