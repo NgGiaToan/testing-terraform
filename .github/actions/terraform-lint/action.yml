@@ -1,0 +1,57 @@
+name: "Terraform Lint"
+description: "Run TFLint recursively and publish findings to the job summary"
+
+inputs:
+  tflint_version:
+    description: "TFLint version to install"
+    required: false
+    default: "v0.64.0"
+  working-directory:
+    description: "Directory to run TFLint in"
+    required: false
+    default: "."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup TFLint
+      uses: terraform-linters/setup-tflint@90f302c255ef959cbfb4bd10581afecdb7ece3e6 # v4.1.1
+      with:
+        tflint_version: ${{ inputs.tflint_version }}
+
+    - name: Init TFLint
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: tflint --init
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+
+    # SARIF + code scanning upload needs GitHub Advanced Security, which isn't available
+    # on private repos without a GHAS license — so findings go to the job summary instead,
+    # which needs no special license or permissions.
+    - name: Run TFLint
+      id: tflint
+      shell: bash
+      continue-on-error: true
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        tflint --recursive --format compact 2>&1 | tee tflint-output.txt
+        exit ${PIPESTATUS[0]}
+
+    - name: Publish TFLint results to job summary
+      if: always()
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        {
+          echo "## TFLint Results"
+          echo
+          echo '```'
+          cat tflint-output.txt
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Fail if TFLint found issues
+      if: steps.tflint.outcome == 'failure'
+      shell: bash
+      run: exit 1

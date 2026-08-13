@@ -39,6 +39,7 @@ resource "aws_s3_bucket" "tflint_test" {
 
   tags = {
     Environment = local.environment
+    Owner       = "platform-team"
   }
 }
 

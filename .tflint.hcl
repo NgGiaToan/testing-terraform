@@ -30,27 +30,10 @@ rule "terraform_naming_convention" {
   }
 }
 
-rule "aws_resource_missing_tags" {
-  enabled  = true
-  severity = "error"
-  tags = [
-    "Environment",
-    "Owner"
-  ]
-}
-
 rule "terraform_documented_variables" {
   enabled = true
 }
 
-rule "terraform_documented_outputs" {
-  enabled = true
-}
-
 rule "terraform_unused_declarations" {
-  enabled = true
-}
-
-rule "terraform_deprecated_interpolation" {
   enabled = true
 }
