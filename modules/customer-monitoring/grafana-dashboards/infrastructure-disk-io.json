@@ -1,0 +1,125 @@
+{
+  "title": "Infrastructure - Disk I/O",
+  "uid": "infra-disk-io",
+  "tags": ["infrastructure", "ebs"],
+  "schemaVersion": 39,
+  "editable": true,
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "5m",
+  "templating": {
+    "list": [
+      { "name": "datasource", "type": "datasource", "query": "cloudwatch", "label": "Customer account" },
+      {
+        "name": "region", "type": "query", "label": "Region", "refresh": 1,
+        "datasource": { "type": "cloudwatch", "uid": "${datasource}" },
+        "query": { "queryType": "regions", "refId": "region" }
+      },
+      {
+        "name": "instance_id", "type": "query", "label": "Instance", "refresh": 1,
+        "datasource": { "type": "cloudwatch", "uid": "${datasource}" },
+        "query": {
+          "queryType": "dimensionValues", "region": "$region", "namespace": "AWS/EC2",
+          "metricName": "EBSReadBytes", "dimensionKey": "InstanceId", "refId": "instance"
+        }
+      },
+      {
+        "name": "volume_id", "type": "query", "label": "Volume", "refresh": 1,
+        "datasource": { "type": "cloudwatch", "uid": "${datasource}" },
+        "query": {
+          "queryType": "dimensionValues", "region": "$region", "namespace": "AWS/EBS",
+          "metricName": "VolumeReadBytes", "dimensionKey": "VolumeId", "refId": "volume"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Disk read (bytes)",
+      "description": "Read throughput: Sum per 300 s divided by 300. Helps explain slow responses or high CPU wait. Nitro instances only.",
+      "datasource": { "type": "cloudwatch", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "Bps", "min": 0 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "queryMode": "Metrics", "region": "$region", "namespace": "AWS/EC2", "metricName": "EBSReadBytes", "dimensions": { "InstanceId": "$instance_id" }, "statistic": "Sum", "period": "300", "matchExact": true, "id": "a", "hide": true },
+        { "refId": "B", "queryMode": "Metrics", "metricEditorMode": 1, "metricQueryType": 0, "region": "$region", "expression": "a / 300", "label": "Read bytes/s", "period": "300", "id": "b" }
+      ]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Disk write (bytes)",
+      "description": "Write throughput: Sum per 300 s divided by 300. Helps spot log growth or backup load. Nitro instances only.",
+      "datasource": { "type": "cloudwatch", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "Bps", "min": 0 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "queryMode": "Metrics", "region": "$region", "namespace": "AWS/EC2", "metricName": "EBSWriteBytes", "dimensions": { "InstanceId": "$instance_id" }, "statistic": "Sum", "period": "300", "matchExact": true, "id": "a", "hide": true },
+        { "refId": "B", "queryMode": "Metrics", "metricEditorMode": 1, "metricQueryType": 0, "region": "$region", "expression": "a / 300", "label": "Write bytes/s", "period": "300", "id": "b" }
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Disk read (operations)",
+      "description": "Read IOPS: Sum per 300 s divided by 300. Helps detect volume limits being reached. Nitro instances only.",
+      "datasource": { "type": "cloudwatch", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "iops", "min": 0 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "queryMode": "Metrics", "region": "$region", "namespace": "AWS/EC2", "metricName": "EBSReadOps", "dimensions": { "InstanceId": "$instance_id" }, "statistic": "Sum", "period": "300", "matchExact": true, "id": "a", "hide": true },
+        { "refId": "B", "queryMode": "Metrics", "metricEditorMode": 1, "metricQueryType": 0, "region": "$region", "expression": "a / 300", "label": "Read IOPS", "period": "300", "id": "b" }
+      ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Disk write (operations)",
+      "description": "Write IOPS: Sum per 300 s divided by 300. Helps detect volume limits being reached. Nitro instances only.",
+      "datasource": { "type": "cloudwatch", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "iops", "min": 0 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "queryMode": "Metrics", "region": "$region", "namespace": "AWS/EC2", "metricName": "EBSWriteOps", "dimensions": { "InstanceId": "$instance_id" }, "statistic": "Sum", "period": "300", "matchExact": true, "id": "a", "hide": true },
+        { "refId": "B", "queryMode": "Metrics", "metricEditorMode": 1, "metricQueryType": 0, "region": "$region", "expression": "a / 300", "label": "Write IOPS", "period": "300", "id": "b" }
+      ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Volume read (bytes)",
+      "description": "Per-volume read throughput (AWS/EBS VolumeReadBytes): Sum per 300 s divided by 300. Works on Nitro and older instances.",
+      "datasource": { "type": "cloudwatch", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "Bps", "min": 0 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "queryMode": "Metrics", "region": "$region", "namespace": "AWS/EBS", "metricName": "VolumeReadBytes", "dimensions": { "VolumeId": "$volume_id" }, "statistic": "Sum", "period": "300", "matchExact": true, "id": "a", "hide": true },
+        { "refId": "B", "queryMode": "Metrics", "metricEditorMode": 1, "metricQueryType": 0, "region": "$region", "expression": "a / 300", "label": "Read bytes/s", "period": "300", "id": "b" }
+      ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Volume write (bytes)",
+      "description": "Per-volume write throughput (AWS/EBS VolumeWriteBytes): Sum per 300 s divided by 300. Works on Nitro and older instances.",
+      "datasource": { "type": "cloudwatch", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "Bps", "min": 0 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "queryMode": "Metrics", "region": "$region", "namespace": "AWS/EBS", "metricName": "VolumeWriteBytes", "dimensions": { "VolumeId": "$volume_id" }, "statistic": "Sum", "period": "300", "matchExact": true, "id": "a", "hide": true },
+        { "refId": "B", "queryMode": "Metrics", "metricEditorMode": 1, "metricQueryType": 0, "region": "$region", "expression": "a / 300", "label": "Write bytes/s", "period": "300", "id": "b" }
+      ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Volume read (operations)",
+      "description": "Per-volume read IOPS (AWS/EBS VolumeReadOps): Sum per 300 s divided by 300. Works on Nitro and older instances.",
+      "datasource": { "type": "cloudwatch", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "iops", "min": 0 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "queryMode": "Metrics", "region": "$region", "namespace": "AWS/EBS", "metricName": "VolumeReadOps", "dimensions": { "VolumeId": "$volume_id" }, "statistic": "Sum", "period": "300", "matchExact": true, "id": "a", "hide": true },
+        { "refId": "B", "queryMode": "Metrics", "metricEditorMode": 1, "metricQueryType": 0, "region": "$region", "expression": "a / 300", "label": "Read IOPS", "period": "300", "id": "b" }
+      ]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Volume write (operations)",
+      "description": "Per-volume write IOPS (AWS/EBS VolumeWriteOps): Sum per 300 s divided by 300. Works on Nitro and older instances.",
+      "datasource": { "type": "cloudwatch", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "iops", "min": 0 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "queryMode": "Metrics", "region": "$region", "namespace": "AWS/EBS", "metricName": "VolumeWriteOps", "dimensions": { "VolumeId": "$volume_id" }, "statistic": "Sum", "period": "300", "matchExact": true, "id": "a", "hide": true },
+        { "refId": "B", "queryMode": "Metrics", "metricEditorMode": 1, "metricQueryType": 0, "region": "$region", "expression": "a / 300", "label": "Write IOPS", "period": "300", "id": "b" }
+      ]
+    }
+  ]
+}

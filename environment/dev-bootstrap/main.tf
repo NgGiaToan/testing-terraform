@@ -10,7 +10,7 @@ terraform {
 
   backend "s3" {
     bucket         = "testing-terraform-tfstate"
-    key            = "dev-cus001/terraform.tfstate"
+    key            = "dev-bootstrap/terraform.tfstate"
     region         = "us-east-1"
     dynamodb_table = "testing-terraform-tflock"
     encrypt        = true
@@ -22,7 +22,7 @@ provider "aws" {
 }
 
 locals {
-  environment = "dev-cus001"
+  environment = "dev-bootstrap"
 }
 
 resource "aws_s3_bucket" "example" {
@@ -31,14 +31,6 @@ resource "aws_s3_bucket" "example" {
   tags = {
     Environment = local.environment
     Owner       = "platform-team"
-  }
-}
-
-resource "aws_s3_bucket" "tflint_test" {
-  bucket = "my-example-tflint-test-bucket-12345"
-
-  tags = {
-    Environment = local.environment
   }
 }
 

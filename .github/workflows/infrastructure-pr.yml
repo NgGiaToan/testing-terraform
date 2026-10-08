@@ -1,0 +1,411 @@
+name: Infrastructure - PR
+
+# Runs on every PR into main. Every tier below is plan-only (never applies) and gets its
+# plan + Infracost estimate posted as a PR comment, EXCEPT TempStaging: that's a real
+# per-PR environment, applied here so a reviewer can exercise the actual feature, and torn
+# down again once the PR closes.
+#
+# Every plan job declares `environment: <name>-plan` — an unprotected GitHub Environment
+# with no required reviewers, used only to scope which AWS role/secrets it gets. Only
+# TempStaging's apply job points at the real `tempstaging` environment. This split is what
+# lets plan assume credentials without being gated by an approval it's supposed to inform.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, closed]
+
+jobs:
+  lint-snyk:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Terraform Lint
+        uses: ./.github/actions/terraform-lint
+
+      - name: Run Ansible Lint
+        uses: ./.github/actions/ansible-lint
+
+      - name: Run Snyk IaC scan
+        uses: snyk/actions/iac@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=medium
+
+  # --- Shared account infra (shr-bootstrap, shr-iam) — plan only. Apply is manual by an
+  # admin (shr-bootstrap creates the state bucket/lock table, shr-iam creates the OIDC
+  # provider + the plan/apply roles themselves, so neither can safely auto-apply from CI),
+  # but plan can run here since the plan role these jobs assume already exists once
+  # shr-iam has been applied at least once. ---
+  plan-shr:
+    if: github.event.action != 'closed'
+    needs: [lint-snyk]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tf_env_shr: [shr-bootstrap, shr-iam]
+    environment: ${{ matrix.tf_env_shr }}-plan
+    concurrency:
+      group: plan-${{ matrix.tf_env_shr }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Only plan this tf_env if its own folder (or the pipeline itself) changed in
+      # this PR — skips a needless plan+Infracost run when the diff is elsewhere.
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            changed:
+              - 'environment/${{ matrix.tf_env_shr }}/**'
+              - '.github/workflows/**'
+              - '.github/actions/**'
+
+      - if: steps.filter.outputs.changed == 'true'
+        uses: ./.github/actions/terraform-plan-cost
+        with:
+          working-directory: environment/${{ matrix.tf_env_shr }}
+          env-name: ${{ matrix.tf_env_shr }}
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
+          pr-number: ${{ github.event.pull_request.number }}
+
+  # --- Staging: Global (bootstrap + admin — fixed set, not discovered) ---
+  plan-staging-global:
+    if: github.event.action != 'closed'
+    needs: [lint-snyk]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tf_env: [stg-bootstrap, stg-admin]
+    environment: staging-${{ matrix.tf_env }}-plan
+    concurrency:
+      group: plan-${{ matrix.tf_env }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            changed:
+              - 'environment/${{ matrix.tf_env }}/**'
+              - '.github/workflows/**'
+              - '.github/actions/**'
+
+      - if: steps.filter.outputs.changed == 'true'
+        uses: ./.github/actions/terraform-plan-cost
+        with:
+          working-directory: environment/${{ matrix.tf_env }}
+          env-name: staging-${{ matrix.tf_env }}
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
+          pr-number: ${{ github.event.pull_request.number }}
+
+  # --- Prod: per-customer production. Customers are data, not directories in this repo —
+  # the list is discovered from SSM Parameter Store (/oglh/customers/<code>), and every
+  # customer plans on every PR against the single shared environment/prd-customer
+  # module, parameterized by customer_code. ---
+  discover-customers:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      customers: ${{ steps.list.outputs.customers }}
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          aws-region: us-east-1
+
+      - name: List customer codes from SSM (/oglh/customers/<code>)
+        id: list
+        run: |
+          customers=$(aws ssm get-parameters-by-path --path "/oglh/customers" --output json \
+            | jq -r '.Parameters[].Name | split("/") | last' \
+            | sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "customers=$customers" >> "$GITHUB_OUTPUT"
+
+  plan-prod-customers:
+    needs: [lint-snyk, discover-customers]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        customer: ${{ fromJSON(needs.discover-customers.outputs.customers) }}
+    environment: prod-${{ matrix.customer }}-plan
+    concurrency:
+      group: plan-prod-${{ matrix.customer }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    env:
+      TF_VAR_customer_code: ${{ matrix.customer }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # prd-customer is one shared module for every customer, so the check is against
+      # the module folder itself, not per-customer.
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            changed:
+              - 'environment/prd-customer/**'
+              - '.github/workflows/**'
+              - '.github/actions/**'
+
+      - if: steps.filter.outputs.changed == 'true'
+        uses: ./.github/actions/terraform-plan-cost
+        with:
+          working-directory: environment/prd-customer
+          env-name: prod-${{ matrix.customer }}
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
+          pr-number: ${{ github.event.pull_request.number }}
+          backend-config: key=oglh/customers/${{ matrix.customer }}/terraform.tfstate
+
+  # --- Prod: Global (bootstrap + admin — fixed set, not discovered) ---
+  plan-prod-global:
+    if: github.event.action != 'closed'
+    needs: [lint-snyk]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tf_env_prod: [prd-bootstrap, prd-admin]
+    environment: prod-${{ matrix.tf_env_prod }}-plan
+    concurrency:
+      group: plan-${{ matrix.tf_env_prod }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            changed:
+              - 'environment/${{ matrix.tf_env_prod }}/**'
+              - '.github/workflows/**'
+              - '.github/actions/**'
+
+      - if: steps.filter.outputs.changed == 'true'
+        uses: ./.github/actions/terraform-plan-cost
+        with:
+          working-directory: environment/${{ matrix.tf_env_prod }}
+          env-name: prod-${{ matrix.tf_env_prod }}
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
+          pr-number: ${{ github.event.pull_request.number }}
+
+  # --- Staging: Demo/Testing. These envs are data too — the list is discovered from SSM
+  # Parameter Store (/envs/stg_*), and every env plans against the single shared
+  # environment/stg-customer module, parameterized by env_name. ---
+  discover-demo-envs:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      envs: ${{ steps.list.outputs.envs }}
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          aws-region: us-east-1
+
+      - name: List stg_* env names from SSM (/envs/stg_*)
+        id: list
+        run: |
+          envs=$(aws ssm get-parameters-by-path --path "/envs" --output json \
+            | jq -r '.Parameters[].Name | split("/") | last' \
+            | grep '^stg_' \
+            | sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "envs=$envs" >> "$GITHUB_OUTPUT"
+
+  plan-staging-demo:
+    needs: [lint-snyk, discover-demo-envs]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tf_cus: ${{ fromJSON(needs.discover-demo-envs.outputs.envs) }}
+    environment: staging-${{ matrix.tf_cus }}-plan
+    # Group name kept as "plan-tempstaging-<tf_cus>" to match the naming this tier was
+    # specified with — worth double-checking this is intentional and not meant to be
+    # "plan-staging-<tf_cus>", since as written it shares no group with the Staging Demo
+    # apply step's own concurrency group over in infrastructure-main.yml.
+    concurrency:
+      group: plan-tempstaging-${{ matrix.tf_cus }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    env:
+      TF_VAR_env_name: ${{ matrix.tf_cus }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # stg-customer is one shared module for every demo env, so the check is against
+      # the module folder itself, not per-env.
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            changed:
+              - 'environment/stg-customer/**'
+              - '.github/workflows/**'
+              - '.github/actions/**'
+
+      - if: steps.filter.outputs.changed == 'true'
+        uses: ./.github/actions/terraform-plan-cost
+        with:
+          working-directory: environment/stg-customer
+          env-name: staging-${{ matrix.tf_cus }}
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
+          pr-number: ${{ github.event.pull_request.number }}
+          backend-config: key=envs/${{ matrix.tf_cus }}/terraform.tfstate
+
+  # --- Staging: PR smoke test (TempStaging) — the only tier in this file that applies.
+  # One environment per PR (not per app), state keyed by PR number so concurrent PRs never
+  # collide, destroyed automatically if the PR closes without merging. Gated on
+  # environment/tempstaging/** like every other tier — a PR that doesn't touch this
+  # folder skips both the plan and the apply below. ---
+  plan-tempstaging:
+    if: github.event.action != 'closed'
+    needs: [lint-snyk]
+    runs-on: ubuntu-latest
+    environment: tempstaging-plan
+    concurrency:
+      group: plan-tempstaging-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    # tempstaging/main.tf requires `pr_number` (used to key its backend and tag its
+    # resources) — TF_VAR_* is how Terraform picks up a variable without every plan/apply/
+    # destroy call in this file needing its own -var flag.
+    env:
+      TF_VAR_pr_number: ${{ github.event.pull_request.number }}
+    outputs:
+      changed: ${{ steps.filter.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            changed:
+              - 'environment/tempstaging/**'
+              - '.github/workflows/**'
+              - '.github/actions/**'
+
+      - if: steps.filter.outputs.changed == 'true'
+        uses: ./.github/actions/terraform-plan-cost
+        with:
+          working-directory: environment/tempstaging
+          env-name: tempstaging
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
+          pr-number: ${{ github.event.pull_request.number }}
+          backend-config: key=tempstaging/pr-${{ github.event.pull_request.number }}/terraform.tfstate
+
+  apply-tempstaging:
+    needs: [plan-tempstaging]
+    if: needs.plan-tempstaging.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    environment: tempstaging
+    concurrency:
+      group: apply-tempstaging-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_VAR_pr_number: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/terraform-apply
+        with:
+          working-directory: environment/tempstaging
+          env-name: tempstaging
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-apply
+          backend-config: key=tempstaging/pr-${{ github.event.pull_request.number }}/terraform.tfstate
+          run-ansible: "true"
+
+  # --- PR closed without merging: tear TempStaging back down. A merged PR's TempStaging
+  # is deliberately left as-is (no destroy) — only an abandoned PR's ephemeral env is torn
+  # down here. ---
+  destroy-tempstaging:
+    if: github.event.action == 'closed' && github.event.pull_request.merged == false
+    runs-on: ubuntu-latest
+    environment: tempstaging
+    concurrency:
+      group: tempstaging-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-apply
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: environment/tempstaging
+        run: terraform init -backend-config="key=tempstaging/pr-${{ github.event.pull_request.number }}/terraform.tfstate"
+
+      - name: Terraform Destroy
+        working-directory: environment/tempstaging
+        run: terraform destroy -no-color -auto-approve -var="pr_number=${{ github.event.pull_request.number }}"
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: "✅ TempStaging destroyed (PR closed without merging)."
+            });

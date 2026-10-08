@@ -1,0 +1,3 @@
+Add-Content -Path .gitignore -Value ".terraform/"
+Add-Content -Path .gitignore -Value "*.tfstate"
+Add-Content -Path .gitignore -Value "*.tfstate.*"
