@@ -1,0 +1,320 @@
+name: Infrastructure - Main
+
+# Runs on every push to main (right after a PR merges). Re-runs lint/Snyk, then promotes
+# Staging -> Production per tier: every Staging leg (Demo/Testing + Global) must apply
+# successfully before either Production leg (Global or per-customer) starts — a job-level
+# `needs:` waits for the whole matrix job, not per leg, so both staging jobs are named in
+# every prod job's `needs:`.
+#
+# As in infrastructure-pr.yml, every plan job points at an unprotected `<name>-plan`
+# environment (for OIDC role/secrets only) while the matching apply job points at the real
+# environment that carries the required-reviewers rule on production tiers.
+on:
+  push:
+    branches: [main]
+
+jobs:
+  lint-snyk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Terraform Lint
+        uses: ./.github/actions/terraform-lint
+
+      - name: Run Ansible Lint
+        uses: ./.github/actions/ansible-lint
+
+      - name: Run Snyk IaC scan
+        uses: snyk/actions/iac@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=medium
+
+  # --- Staging: Demo/Testing. These envs are data too — the list is discovered from SSM
+  # Parameter Store (/envs/stg_*), and every env applies the single shared
+  # environment/stg-customer module, parameterized by env_name. ---
+  discover-demo-envs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      envs: ${{ steps.list.outputs.envs }}
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          aws-region: us-east-1
+
+      - name: List stg_* env names from SSM (/envs/stg_*)
+        id: list
+        run: |
+          envs=$(aws ssm get-parameters-by-path --path "/envs" --output json \
+            | jq -r '.Parameters[].Name | split("/") | last' \
+            | grep '^stg_' \
+            | sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "envs=$envs" >> "$GITHUB_OUTPUT"
+
+  plan-staging-demo:
+    needs: [lint-snyk, discover-demo-envs]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tf_cus: ${{ fromJSON(needs.discover-demo-envs.outputs.envs) }}
+    environment: staging-${{ matrix.tf_cus }}-plan
+    # Group kept as "plan-tempstaging-<tf_cus>" to match this tier's spec — see the same
+    # note in infrastructure-pr.yml's plan-staging-demo job.
+    concurrency:
+      group: plan-tempstaging-${{ matrix.tf_cus }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_VAR_env_name: ${{ matrix.tf_cus }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/terraform-plan-cost
+        with:
+          working-directory: environment/stg-customer
+          env-name: staging-${{ matrix.tf_cus }}
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
+          backend-config: key=envs/${{ matrix.tf_cus }}/terraform.tfstate
+
+  apply-staging-demo:
+    needs: [plan-staging-demo]
+    strategy:
+      fail-fast: false
+      matrix:
+        tf_cus: ${{ fromJSON(needs.discover-demo-envs.outputs.envs) }}
+    runs-on: ubuntu-latest
+    environment: staging-${{ matrix.tf_cus }}
+    # Same group as the plan job above, per this tier's spec — queues apply behind plan
+    # for the same tf_cus instead of racing it.
+    concurrency:
+      group: plan-tempstaging-${{ matrix.tf_cus }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_VAR_env_name: ${{ matrix.tf_cus }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/terraform-apply
+        with:
+          working-directory: environment/stg-customer
+          env-name: staging-${{ matrix.tf_cus }}
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-apply
+          run-ansible: "true"
+          backend-config: key=envs/${{ matrix.tf_cus }}/terraform.tfstate
+
+  # --- Staging: Global (bootstrap + admin) — runs in parallel with the Demo/Testing tier
+  # above, entirely independent of it. ---
+  plan-staging-global:
+    needs: [lint-snyk]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tf_env: [stg-bootstrap, stg-admin]
+    environment: staging-${{ matrix.tf_env }}-plan
+    concurrency:
+      group: plan-staging-${{ matrix.tf_env }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/terraform-plan-cost
+        with:
+          working-directory: environment/${{ matrix.tf_env }}
+          env-name: staging-${{ matrix.tf_env }}
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
+
+  apply-staging-global:
+    needs: [plan-staging-global]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tf_env: [stg-bootstrap, stg-admin]
+    environment: staging-${{ matrix.tf_env }}
+    concurrency:
+      group: apply-staging-${{ matrix.tf_env }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      # No Ansible step here, matching this tier's spec (only Staging Demo/Testing and
+      # the Production tiers below run a playbook after apply).
+      - uses: ./.github/actions/terraform-apply
+        with:
+          working-directory: environment/${{ matrix.tf_env }}
+          env-name: staging-${{ matrix.tf_env }}
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-apply
+
+  # --- Production: Global (bootstrap + admin). Gated on BOTH Staging legs above having
+  # fully applied — a job-level `needs:` waits for the whole matrix, not per leg. ---
+  plan-prod-global:
+    needs: [apply-staging-demo, apply-staging-global]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tf_env_prod: [prd-bootstrap, prd-admin]
+    environment: prod-${{ matrix.tf_env_prod }}-plan
+    concurrency:
+      group: plan-prod-${{ matrix.tf_env_prod }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/terraform-plan-cost
+        with:
+          working-directory: environment/${{ matrix.tf_env_prod }}
+          env-name: prod-${{ matrix.tf_env_prod }}
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
+
+  apply-prod-global:
+    needs: [plan-prod-global]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tf_env_prod: [prd-bootstrap, prd-admin]
+    # The required-reviewers rule for this promotion belongs on this environment.
+    environment: prod-${{ matrix.tf_env_prod }}
+    concurrency:
+      group: apply-prod-${{ matrix.tf_env_prod }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/terraform-apply
+        with:
+          working-directory: environment/${{ matrix.tf_env_prod }}
+          env-name: prod-${{ matrix.tf_env_prod }}
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-apply
+
+  # --- Production: per-customer. Customers are data, not directories in this repo — the
+  # list is discovered from SSM Parameter Store (/oglh/customers/<code>), and every
+  # customer applies the single shared environment/prd-customer module, parameterized
+  # by customer_code. Also gated on both Staging legs. ---
+  discover-customers:
+    needs: [apply-staging-demo, apply-staging-global]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      customers: ${{ steps.list.outputs.customers }}
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          aws-region: us-east-1
+
+      - name: List customer codes from SSM (/oglh/customers/<code>)
+        id: list
+        run: |
+          customers=$(aws ssm get-parameters-by-path --path "/oglh/customers" --output json \
+            | jq -r '.Parameters[].Name | split("/") | last' \
+            | sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "customers=$customers" >> "$GITHUB_OUTPUT"
+
+  plan-prod-customers:
+    needs: [discover-customers]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        customer: ${{ fromJSON(needs.discover-customers.outputs.customers) }}
+    environment: prod-${{ matrix.customer }}-plan
+    concurrency:
+      group: plan-prod-${{ matrix.customer }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_VAR_customer_code: ${{ matrix.customer }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/terraform-plan-cost
+        with:
+          working-directory: environment/prd-customer
+          env-name: prod-${{ matrix.customer }}
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
+          backend-config: key=oglh/customers/${{ matrix.customer }}/terraform.tfstate
+
+  apply-prod-customers:
+    needs: [plan-prod-customers]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        customer: ${{ fromJSON(needs.discover-customers.outputs.customers) }}
+    environment: prod-${{ matrix.customer }}
+    concurrency:
+      group: apply-prod-${{ matrix.customer }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+      actions: write
+    env:
+      TF_VAR_customer_code: ${{ matrix.customer }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/terraform-apply
+        with:
+          working-directory: environment/prd-customer
+          env-name: prod-${{ matrix.customer }}
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-apply
+          run-ansible: "true"
+          backend-config: key=oglh/customers/${{ matrix.customer }}/terraform.tfstate
+
+      # Any other run still sitting in "Waiting" for this same prod-<customer> approval is
+      # now stale — this apply just moved that customer's prod state past it, so approving
+      # it later would only hit Terraform's own "Saved plan is stale" error.
+      - name: Cancel other runs waiting on this customer's prod approval
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_ENVIRONMENT: prod-${{ matrix.customer }}
+        run: |
+          for run_id in $(gh api "repos/${{ github.repository }}/actions/runs?status=waiting" --jq '.workflow_runs[].id'); do
+            if [ "$run_id" = "${{ github.run_id }}" ]; then
+              continue
+            fi
+            is_match=$(gh api "repos/${{ github.repository }}/actions/runs/$run_id/pending_deployments" --jq '.[].environment.name' | grep -xqF "$APP_ENVIRONMENT" && echo yes || echo no)
+            if [ "$is_match" = "yes" ]; then
+              echo "Cancelling run $run_id — superseded, still waiting on $APP_ENVIRONMENT approval"
+              gh api -X POST "repos/${{ github.repository }}/actions/runs/$run_id/cancel"
+            fi
+          done
+
+  deploy-complete:
+    needs: [apply-prod-global, apply-prod-customers]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "✅ Deploy complete" >> "$GITHUB_STEP_SUMMARY"

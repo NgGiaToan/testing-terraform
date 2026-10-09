@@ -1,0 +1,559 @@
+{
+  "title": "Application",
+  "uid": "application",
+  "tags": [
+    "lighthouse",
+    "monitoring"
+  ],
+  "schemaVersion": 39,
+  "editable": true,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "cloudwatch",
+        "label": "Customer"
+      },
+      {
+        "name": "region",
+        "type": "query",
+        "label": "Region",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "queryType": "regions",
+          "refId": "region"
+        }
+      },
+      {
+        "name": "https_canary",
+        "label": "HTTPS canary",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "queryType": "dimensionValues",
+          "region": "$region",
+          "namespace": "CloudWatchSynthetics",
+          "metricName": "SuccessPercent",
+          "dimensionKey": "CanaryName",
+          "refId": "https_canary"
+        }
+      },
+      {
+        "name": "workflow_canary",
+        "label": "Workflow canary",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "queryType": "dimensionValues",
+          "region": "$region",
+          "namespace": "CloudWatchSynthetics",
+          "metricName": "SuccessPercent",
+          "dimensionKey": "CanaryName",
+          "refId": "workflow_canary"
+        }
+      },
+      {
+        "name": "alb",
+        "label": "Application load balancer",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "queryType": "dimensionValues",
+          "region": "$region",
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "RequestCount",
+          "dimensionKey": "LoadBalancer",
+          "refId": "alb"
+        }
+      },
+      {
+        "name": "target_group",
+        "label": "Target group",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "queryType": "dimensionValues",
+          "region": "$region",
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "HealthyHostCount",
+          "dimensionKey": "TargetGroup",
+          "refId": "target_group"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "type": "timeseries",
+      "title": "HTTPS canary status",
+      "description": "SuccessPercent 100 means HTTP 200 on port 443. For the failure reason (DNS, TLS, WAF, load balancer, application) open the run in CloudWatch Synthetics.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "CloudWatchSynthetics",
+          "metricName": "SuccessPercent",
+          "dimensions": {
+            "CanaryName": "$https_canary"
+          },
+          "statistic": "Average",
+          "period": "60",
+          "matchExact": true,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "#d9262c"
+              },
+              {
+                "value": 100,
+                "color": "#2eb67d"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "type": "timeseries",
+      "title": "ALB response time (p95)",
+      "description": "P2 alarm above 0.3 s for 10 minutes.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "TargetResponseTime",
+          "dimensions": {
+            "LoadBalancer": "$alb"
+          },
+          "statistic": "p95",
+          "period": "60",
+          "matchExact": true,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2eb67d",
+                "value": null
+              },
+              {
+                "value": 0.3,
+                "color": "#e8801a"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "type": "timeseries",
+      "title": "ALB request rate",
+      "description": "Requests per minute. P3 alarm above the expected range for 10 minutes.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "RequestCount",
+          "dimensions": {
+            "LoadBalancer": "$alb"
+          },
+          "statistic": "Sum",
+          "period": "60",
+          "matchExact": true,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "type": "timeseries",
+      "title": "ALB 5xx rate",
+      "description": "(Target 5xx + ELB 5xx) / requests x 100, only when the minute had at least 50 requests. P2 alarm above 5% for 5 minutes.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "HTTPCode_Target_5XX_Count",
+          "dimensions": {
+            "LoadBalancer": "$alb"
+          },
+          "statistic": "Sum",
+          "period": "60",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "B",
+          "id": "b",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "HTTPCode_ELB_5XX_Count",
+          "dimensions": {
+            "LoadBalancer": "$alb"
+          },
+          "statistic": "Sum",
+          "period": "60",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "C",
+          "id": "c",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "RequestCount",
+          "dimensions": {
+            "LoadBalancer": "$alb"
+          },
+          "statistic": "Sum",
+          "period": "60",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "D",
+          "id": "d",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "IF(c >= 50, (a + b) / c * 100, 0)",
+          "label": "5xx rate (%)",
+          "period": "60",
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2eb67d",
+                "value": null
+              },
+              {
+                "value": 5,
+                "color": "#e8801a"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "type": "timeseries",
+      "title": "Healthy targets",
+      "description": "Healthy hosts in the application target group. P1 alarm when any target is unhealthy for 3 minutes.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "HealthyHostCount",
+          "dimensions": {
+            "LoadBalancer": "$alb",
+            "TargetGroup": "$target_group"
+          },
+          "statistic": "Minimum",
+          "period": "60",
+          "matchExact": true,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "#d9262c"
+              },
+              {
+                "value": 1,
+                "color": "#2eb67d"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "type": "timeseries",
+      "title": "Workflow canary",
+      "description": "Synthetic workflow canary, every 5 minutes. P2 alarm after 2 runs below 100%.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "CloudWatchSynthetics",
+          "metricName": "SuccessPercent",
+          "dimensions": {
+            "CanaryName": "$workflow_canary"
+          },
+          "statistic": "Average",
+          "period": "300",
+          "matchExact": true,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "#e8801a"
+              },
+              {
+                "value": 100,
+                "color": "#2eb67d"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    }
+  ]
+}

@@ -6,5 +6,5 @@
 
   tasks:
     - name: Say hello
-      debug:
+      ansible.builtin.debug:
         msg: "tflint, snyk, sonarqube test run"

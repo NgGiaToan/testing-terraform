@@ -1,0 +1,253 @@
+{
+  "title": "Remote Access",
+  "uid": "remote-access",
+  "tags": [
+    "lighthouse",
+    "monitoring"
+  ],
+  "schemaVersion": 39,
+  "editable": true,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "cloudwatch",
+        "label": "Customer"
+      },
+      {
+        "name": "region",
+        "type": "query",
+        "label": "Region",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "queryType": "regions",
+          "refId": "region"
+        }
+      },
+      {
+        "name": "nlb",
+        "label": "Network load balancer",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "queryType": "dimensionValues",
+          "region": "$region",
+          "namespace": "AWS/NetworkELB",
+          "metricName": "HealthyHostCount",
+          "dimensionKey": "LoadBalancer",
+          "refId": "nlb"
+        }
+      },
+      {
+        "name": "nlb_target_group",
+        "label": "OpenVPN target group",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "queryType": "dimensionValues",
+          "region": "$region",
+          "namespace": "AWS/NetworkELB",
+          "metricName": "HealthyHostCount",
+          "dimensionKey": "TargetGroup",
+          "refId": "nlb_target_group"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "type": "timeseries",
+      "title": "Healthy targets",
+      "description": "Healthy hosts in the OpenVPN target group. The group has one host, so 0 means no VPN (P1 alarm after 3 minutes).",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/NetworkELB",
+          "metricName": "HealthyHostCount",
+          "dimensions": {
+            "LoadBalancer": "$nlb",
+            "TargetGroup": "$nlb_target_group"
+          },
+          "statistic": "Minimum",
+          "period": "60",
+          "matchExact": true,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "#d9262c"
+              },
+              {
+                "value": 1,
+                "color": "#2eb67d"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "type": "timeseries",
+      "title": "Active VPN connections",
+      "description": "Active flows (average per 5 minutes). P2 alarm when below the expected range for 15 minutes.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/NetworkELB",
+          "metricName": "ActiveFlowCount",
+          "dimensions": {
+            "LoadBalancer": "$nlb",
+            "TargetGroup": "$nlb_target_group"
+          },
+          "statistic": "Average",
+          "period": "300",
+          "matchExact": true,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "type": "timeseries",
+      "title": "New connections per hour",
+      "description": "New flows per hour. Investigation only, no alarm.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/NetworkELB",
+          "metricName": "NewFlowCount",
+          "dimensions": {
+            "LoadBalancer": "$nlb",
+            "TargetGroup": "$nlb_target_group"
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "matchExact": true,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    }
+  ]
+}

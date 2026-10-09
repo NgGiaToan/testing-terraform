@@ -1,0 +1,226 @@
+name: "Terraform Plan + Cost"
+description: "Assume the plan role, run terraform fmt/init/validate/plan, publish its JSON and raw plan as artifacts, compute its Infracost estimate, and publish both to a PR comment or the job summary"
+
+inputs:
+  working-directory:
+    description: "Directory containing the Terraform config to plan"
+    required: true
+  env-name:
+    description: "Environment name (e.g. staging-stg_admin), used in artifact names, comments, and the job summary"
+    required: true
+  role-arn:
+    description: "ARN of the read-only plan role to assume via OIDC"
+    required: true
+  infracost-api-key:
+    required: true
+  backend-config:
+    description: "Passed to `terraform init -backend-config=...`, for backends that need a run-time value (e.g. TempStaging's per-PR state key, which can't be a literal in the backend block)"
+    required: false
+    default: ""
+  pr-number:
+    description: "PR number to comment on. Leave empty for push-to-main runs — with no PR to comment on, results go to the job summary instead."
+    required: false
+    default: ""
+
+outputs:
+  fmt-outcome:
+    value: ${{ steps.fmt.outcome }}
+  plan-outcome:
+    value: ${{ steps.plan.outcome }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Configure AWS credentials via OIDC
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ inputs.role-arn }}
+        aws-region: us-east-1
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    - name: Terraform Format Check
+      id: fmt
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: terraform fmt -check -recursive
+      continue-on-error: true
+
+    - name: Terraform Init
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if [ -n "${{ inputs.backend-config }}" ]; then
+          terraform init -backend-config="${{ inputs.backend-config }}"
+        else
+          terraform init
+        fi
+
+    - name: Terraform Validate
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: terraform validate -no-color
+
+    - name: Terraform Plan
+      id: plan
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: terraform plan -no-color -out=tfplan
+      continue-on-error: true
+
+    - name: Terraform Show (JSON, for formatting/summary)
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: terraform show -no-color -json tfplan > tfplan.json
+
+    # Published so a downstream Infracost step can compute cost from this exact plan
+    # instead of running its own separate terraform init/plan against the same state.
+    - name: Upload plan JSON for Infracost
+      uses: actions/upload-artifact@v4
+      with:
+        name: tfplan-${{ inputs.env-name }}
+        path: ${{ inputs.working-directory }}/tfplan.json
+        retention-days: 1
+
+    # Published so a downstream apply job can `terraform apply tfplan` this exact binary
+    # instead of re-planning — what gets reviewed is guaranteed to be what gets applied.
+    # Harmless to publish even for tiers nothing ever applies (e.g. Share/shr-*).
+    - name: Upload raw plan for apply
+      uses: actions/upload-artifact@v4
+      with:
+        name: tfplan-bin-${{ inputs.env-name }}
+        path: ${{ inputs.working-directory }}/tfplan
+        retention-days: 1
+
+    - name: Terraform Show (human-readable text)
+      id: show
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: terraform show -no-color tfplan
+
+    - name: Build readable plan tree
+      id: tree
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        {
+          echo "tree<<EOF"
+          TOTAL=$(jq '.resource_changes | length' tfplan.json)
+          echo "**Plan (${{ inputs.env-name }}): ${TOTAL} resource(s) affected**"
+          echo ""
+
+          echo "➕ Create"
+          jq -r '.resource_changes[] | select(.change.actions == ["create"]) | "- `\(.address)`"' tfplan.json
+          echo ""
+
+          echo "🔄 Update"
+          i=0
+          for addr in $(jq -r '.resource_changes[] | select(.change.actions == ["update"]) | .address' tfplan.json); do
+            echo "- \`$addr\`"
+            i=$((i + 1))
+            BEFORE_FILE="/tmp/before_${i}.json"
+            AFTER_FILE="/tmp/after_${i}.json"
+            jq --arg a "$addr" '(.resource_changes[] | select(.address == $a) | .change.before) // {}' tfplan.json | jq -S . > "$BEFORE_FILE"
+            jq --arg a "$addr" '(.resource_changes[] | select(.address == $a) | .change.after) // {}' tfplan.json | jq -S . > "$AFTER_FILE"
+            diff -u "$BEFORE_FILE" "$AFTER_FILE" | grep -E '^[+-][^+-]' | sed 's/^/    /'
+            rm -f "$BEFORE_FILE" "$AFTER_FILE"
+          done
+          echo ""
+
+          echo "♻️ Replace"
+          jq -r '.resource_changes[] | select(.change.actions == ["delete","create"]) | "- `\(.address)`"' tfplan.json
+          echo ""
+
+          echo "➖ Destroy"
+          jq -r '.resource_changes[] | select(.change.actions == ["delete"]) | "- `\(.address)`"' tfplan.json
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    # TODO: re-enable once the plan/plan-cost work is done — Infracost is disabled for
+    # now, so "Comment cost on PR" and the Infracost section of the job summary below are
+    # disabled too (both need infracost.json, which this step produces).
+    - name: Setup Infracost
+      if: false
+      uses: infracost/actions/setup@v3
+      with:
+        api-key: ${{ inputs.infracost-api-key }}
+
+    - name: Generate Infracost cost estimate
+      if: false
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: infracost breakdown --path=tfplan.json --format=json --out-file=infracost.json
+
+    - name: Comment plan on PR
+      if: inputs.pr-number != ''
+      uses: actions/github-script@v7
+      env:
+        ENV_NAME: ${{ inputs.env-name }}
+        PLAN: ${{ steps.show.outputs.stdout }}
+        TREE: ${{ steps.tree.outputs.tree }}
+        FMT_OUTCOME: ${{ steps.fmt.outcome }}
+        PLAN_OUTCOME: ${{ steps.plan.outcome }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+      with:
+        script: |
+          const output = `### Terraform Plan — ${process.env.ENV_NAME}
+          #### Terraform Format: \`${process.env.FMT_OUTCOME}\`
+          #### Terraform Plan: \`${process.env.PLAN_OUTCOME}\`
+
+          \`\`\`
+          ${process.env.TREE}
+          \`\`\`
+
+          <details><summary>Show full plan</summary>
+
+          \`\`\`terraform
+          ${process.env.PLAN}
+          \`\`\`
+
+          </details>`;
+
+          github.rest.issues.createComment({
+            issue_number: Number(process.env.PR_NUMBER),
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: output
+          });
+
+    - name: Comment cost on PR
+      if: false && inputs.pr-number != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        infracost comment github --path=infracost.json \
+          --repo=$GITHUB_REPOSITORY \
+          --pull-request=${{ inputs.pr-number }} \
+          --tag=${{ inputs.env-name }} \
+          --behavior=update
+
+    - name: Publish plan + cost to job summary
+      if: inputs.pr-number == ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        {
+          echo "### Terraform Plan — ${{ inputs.env-name }}"
+          echo "Format: \`${{ steps.fmt.outcome }}\` — Plan: \`${{ steps.plan.outcome }}\`"
+          echo
+          echo '```'
+          cat <<'TREE'
+        ${{ steps.tree.outputs.tree }}
+        TREE
+          echo '```'
+          # echo
+          # echo "### Infracost — ${{ inputs.env-name }}"
+          # echo
+          # echo '```'
+          # infracost output --path=infracost.json --format=table
+          # echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Fail if plan or format failed
+      if: steps.fmt.outcome == 'failure' || steps.plan.outcome == 'failure'
+      shell: bash
+      run: exit 1
