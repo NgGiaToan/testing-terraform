@@ -29,26 +29,21 @@ provider "aws" {
 }
 
 variable "region" {
-  description = "Region this alerting stack serves (customer topics deliver to a Lambda in the same region)"
+  description = "Region the formatter Lambda is deployed in. Customer topics in other regions deliver to it too when listed in customer_regions."
   type        = string
-  default     = "us-east-1"
+  default     = "ap-southeast-2"
 }
 
-variable "slack_bot_token_secret_arn" {
-  description = "Secrets Manager secret ARN holding the Slack bot token. Required — create the secret first (value: the xoxb- bot token)."
+variable "slack_webhook_secret_arn" {
+  description = "ARN of an existing secret holding the Slack Incoming Webhook URL(s). Null (default) creates an empty secret, lighthouse-alerting-slack-webhooks; set its value with the AWS CLI after the first apply (value: one URL, or JSON {\"Operations\": \"<url>\", \"Engineering\": \"<url>\"})."
   type        = string
+  default     = null
 }
 
-variable "slack_channel_operations" {
-  description = "Slack channel for alerts addressed to Operations. Placeholder pending the real channel name."
-  type        = string
-  default     = "lighthouse-ops-alerts"
-}
-
-variable "slack_channel_engineering" {
-  description = "Slack channel for alerts addressed to Engineering. Placeholder pending the real channel name."
-  type        = string
-  default     = "lighthouse-eng-alerts"
+variable "customer_regions" {
+  description = "Regions besides var.region where customer accounts have alert topics that deliver to the formatter (cross-region SNS to Lambda). Empty = same region only."
+  type        = list(string)
+  default     = []
 }
 
 variable "customer_account_ids" {
@@ -81,18 +76,42 @@ variable "dashboard_url" {
   default     = null
 }
 
+variable "grafana_account_id" {
+  description = "AWS account ID Grafana runs in. Null skips the management-account read-only role."
+  type        = string
+  default     = null
+}
+
+variable "grafana_external_id" {
+  description = "External ID Grafana uses when assuming the management-account read-only role"
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
 module "alert_formatter" {
   source = "../../modules/alert-formatter"
 
   region                              = var.region
-  slack_bot_token_secret_arn          = var.slack_bot_token_secret_arn
-  slack_channel_operations            = var.slack_channel_operations
-  slack_channel_engineering           = var.slack_channel_engineering
+  slack_webhook_secret_arn            = var.slack_webhook_secret_arn
   customer_account_ids                = var.customer_account_ids
+  customer_regions                    = var.customer_regions
   engineering_alert_emails            = var.engineering_alert_emails
   network_firewall_name               = var.network_firewall_name
   network_firewall_availability_zones = var.network_firewall_availability_zones
   dashboard_url                       = var.dashboard_url
+  grafana_account_id                  = var.grafana_account_id
+  grafana_external_id                 = var.grafana_external_id
+}
+
+output "slack_webhook_secret_arn" {
+  description = "Secret to put the Slack webhook URL(s) into: aws secretsmanager put-secret-value --secret-id <this> --secret-string ..."
+  value       = module.alert_formatter.slack_webhook_secret_arn
+}
+
+output "grafana_role_arn" {
+  description = "Assume Role ARN for Grafana's management-account CloudWatch data source"
+  value       = module.alert_formatter.grafana_role_arn
 }
 
 output "formatter_lambda_arn" {

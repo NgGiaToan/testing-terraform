@@ -45,9 +45,9 @@ the spec mentions but does not list.
 
 ## Slack
 
-The formatter Lambda (`modules/alert-formatter/lambda_src/slack_formatter.py`) posts with a bot
-token. Channel per team: `Operations` → `slack_channel_operations`, `Engineering` →
-`slack_channel_engineering`. A message shows priority, customer, service, alert, the trigger in
+The formatter Lambda (`modules/alert-formatter/lambda_src/slack_formatter.py`) posts through
+Slack Incoming Webhooks. The secret (`slack_webhook_secret_arn`) holds one URL, or JSON with a
+URL per team (`Operations`, `Engineering`). A message shows priority, customer, service, alert, the trigger in
 words, state and a link to the Environment Overview dashboard, with a colour bar per priority and
 green on recovery. Setup steps are in `modules/alert-formatter/README.md`.
 
@@ -66,8 +66,13 @@ green on recovery. Setup steps are in `modules/alert-formatter/README.md`.
 - **Cost monitoring** ("visibility" and "budget alerts") is still "to be defined" in the spec.
   Budget notifications keep the existing Customer-tag filter and are routed 80% / forecast → P3,
   100% → P2.
-- **Grafana dashboards** are not provisioned; only the read-only role per customer account. The
-  management-account read-only role is not created either.
+- **Grafana dashboards** are importable JSON in `modules/customer-monitoring/grafana-dashboards`
+  (six dashboards, thresholds drawn on panels, the Customer dropdown selects the data source).
+  They are not auto-provisioned and have not been imported into a live Grafana. The
+  management-account read-only role is created by `alert-formatter` when `grafana_account_id`
+  and `grafana_external_id` are set. Disk I/O panels have no alarm; the per-volume `AWS/EBS`
+  panels are an addition for non-Nitro instances. "Active alerts" on Environment Overview and
+  the HTTPS canary failure reason are not metrics, so they are not panels.
 - **Disk dimensions** (`device`, `fstype`) default to guesses; confirm against the real agent output.
 - **`monitored_instance_ids` is now `instance_id`** (one Lighthouse instance per customer; alarm
   names must be unique). The old two-topic design (full-detail / status-only) and the per-customer

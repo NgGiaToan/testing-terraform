@@ -1,0 +1,1062 @@
+{
+  "title": "Infrastructure",
+  "uid": "infrastructure",
+  "tags": [
+    "lighthouse",
+    "monitoring"
+  ],
+  "schemaVersion": 39,
+  "editable": true,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "cloudwatch",
+        "label": "Customer"
+      },
+      {
+        "name": "region",
+        "type": "query",
+        "label": "Region",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "queryType": "regions",
+          "refId": "region"
+        }
+      },
+      {
+        "name": "instance_id",
+        "label": "Instance",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "queryType": "dimensionValues",
+          "region": "$region",
+          "namespace": "AWS/EC2",
+          "metricName": "CPUUtilization",
+          "dimensionKey": "InstanceId",
+          "refId": "instance_id"
+        }
+      },
+      {
+        "name": "volume_id",
+        "label": "Volume",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "queryType": "dimensionValues",
+          "region": "$region",
+          "namespace": "AWS/EBS",
+          "metricName": "VolumeReadBytes",
+          "dimensionKey": "VolumeId",
+          "refId": "volume_id"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "type": "timeseries",
+      "title": "EC2 status checks",
+      "description": "Instance check (P1) and attached-EBS check (P2). Alarm when either is 1 for 3 minutes. The EBS check is published for Nitro instances only.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/EC2",
+          "metricName": "StatusCheckFailed",
+          "dimensions": {
+            "InstanceId": "$instance_id"
+          },
+          "statistic": "Maximum",
+          "period": "60",
+          "matchExact": true,
+          "label": "Instance",
+          "hide": false
+        },
+        {
+          "refId": "B",
+          "id": "b",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/EC2",
+          "metricName": "StatusCheckFailed_AttachedEBS",
+          "dimensions": {
+            "InstanceId": "$instance_id"
+          },
+          "statistic": "Maximum",
+          "period": "60",
+          "matchExact": true,
+          "label": "Attached EBS",
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2eb67d",
+                "value": null
+              },
+              {
+                "value": 1,
+                "color": "#d9262c"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "type": "timeseries",
+      "title": "CPU",
+      "description": "Warning P3 above 70% for 15 minutes, critical P2 above 90% for 10 minutes. One-minute data needs detailed monitoring.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/EC2",
+          "metricName": "CPUUtilization",
+          "dimensions": {
+            "InstanceId": "$instance_id"
+          },
+          "statistic": "Average",
+          "period": "60",
+          "matchExact": true,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2eb67d",
+                "value": null
+              },
+              {
+                "value": 70,
+                "color": "#f2c744"
+              },
+              {
+                "value": 90,
+                "color": "#e8801a"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "type": "timeseries",
+      "title": "Memory",
+      "description": "Warning P3 above 70% for 15 minutes, critical P2 above 85% for 10 minutes. Published by the CloudWatch agent.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "CWAgent",
+          "metricName": "mem_used_percent",
+          "dimensions": {
+            "InstanceId": "$instance_id"
+          },
+          "statistic": "Average",
+          "period": "60",
+          "matchExact": true,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2eb67d",
+                "value": null
+              },
+              {
+                "value": 70,
+                "color": "#f2c744"
+              },
+              {
+                "value": 85,
+                "color": "#e8801a"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "type": "timeseries",
+      "title": "Disk used %",
+      "description": "One series per mount point. Warning P3 above 80%, critical P2 above 90% (3 x 5 minutes).",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "CWAgent",
+          "metricName": "disk_used_percent",
+          "dimensions": {
+            "InstanceId": "$instance_id"
+          },
+          "statistic": "Average",
+          "period": "300",
+          "matchExact": false,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2eb67d",
+                "value": null
+              },
+              {
+                "value": 80,
+                "color": "#f2c744"
+              },
+              {
+                "value": 90,
+                "color": "#e8801a"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "type": "timeseries",
+      "title": "Disk read (bytes)",
+      "description": "Read throughput: Sum per 300 s divided by 300. Helps explain slow responses or high CPU wait. Nitro instances only.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/EC2",
+          "metricName": "EBSReadBytes",
+          "dimensions": {
+            "InstanceId": "$instance_id"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "B",
+          "id": "b",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "a / 300",
+          "label": "Read bytes/s",
+          "period": "300",
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "min": 0,
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "type": "timeseries",
+      "title": "Disk write (bytes)",
+      "description": "Write throughput: Sum per 300 s divided by 300. Helps spot log growth or backup load. Nitro instances only.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/EC2",
+          "metricName": "EBSWriteBytes",
+          "dimensions": {
+            "InstanceId": "$instance_id"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "B",
+          "id": "b",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "a / 300",
+          "label": "Write bytes/s",
+          "period": "300",
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "min": 0,
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "type": "timeseries",
+      "title": "Disk read (operations)",
+      "description": "Read IOPS: Sum per 300 s divided by 300. Helps detect volume limits being reached. Nitro instances only.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/EC2",
+          "metricName": "EBSReadOps",
+          "dimensions": {
+            "InstanceId": "$instance_id"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "B",
+          "id": "b",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "a / 300",
+          "label": "Read IOPS",
+          "period": "300",
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "iops",
+          "min": 0,
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "type": "timeseries",
+      "title": "Disk write (operations)",
+      "description": "Write IOPS: Sum per 300 s divided by 300. Helps detect volume limits being reached. Nitro instances only.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/EC2",
+          "metricName": "EBSWriteOps",
+          "dimensions": {
+            "InstanceId": "$instance_id"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "B",
+          "id": "b",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "a / 300",
+          "label": "Write IOPS",
+          "period": "300",
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "iops",
+          "min": 0,
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "type": "timeseries",
+      "title": "Volume read (bytes)",
+      "description": "Per-volume read throughput (AWS/EBS). Works on Nitro and older instances.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/EBS",
+          "metricName": "VolumeReadBytes",
+          "dimensions": {
+            "VolumeId": "$volume_id"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "B",
+          "id": "b",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "a / 300",
+          "label": "Read bytes/s",
+          "period": "300",
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "min": 0,
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "type": "timeseries",
+      "title": "Volume write (bytes)",
+      "description": "Per-volume write throughput (AWS/EBS). Works on Nitro and older instances.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/EBS",
+          "metricName": "VolumeWriteBytes",
+          "dimensions": {
+            "VolumeId": "$volume_id"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "B",
+          "id": "b",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "a / 300",
+          "label": "Write bytes/s",
+          "period": "300",
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "min": 0,
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 40
+      },
+      "type": "timeseries",
+      "title": "Volume read (operations)",
+      "description": "Per-volume read IOPS (AWS/EBS). Works on Nitro and older instances.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/EBS",
+          "metricName": "VolumeReadOps",
+          "dimensions": {
+            "VolumeId": "$volume_id"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "B",
+          "id": "b",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "a / 300",
+          "label": "Read IOPS",
+          "period": "300",
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "iops",
+          "min": 0,
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      },
+      "type": "timeseries",
+      "title": "Volume write (operations)",
+      "description": "Per-volume write IOPS (AWS/EBS). Works on Nitro and older instances.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/EBS",
+          "metricName": "VolumeWriteOps",
+          "dimensions": {
+            "VolumeId": "$volume_id"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "B",
+          "id": "b",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "a / 300",
+          "label": "Write IOPS",
+          "period": "300",
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "iops",
+          "min": 0,
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 48
+      },
+      "type": "timeseries",
+      "title": "Network in/out",
+      "description": "Bytes per second. NetworkOut alarms (P3) above its expected range for 30 minutes; NetworkIn has no alarm.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/EC2",
+          "metricName": "NetworkIn",
+          "dimensions": {
+            "InstanceId": "$instance_id"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "B",
+          "id": "b",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/EC2",
+          "metricName": "NetworkOut",
+          "dimensions": {
+            "InstanceId": "$instance_id"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "C",
+          "id": "c",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "a / 300",
+          "label": "In bytes/s",
+          "period": "300",
+          "hide": false
+        },
+        {
+          "refId": "D",
+          "id": "d",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "b / 300",
+          "label": "Out bytes/s",
+          "period": "300",
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "min": 0,
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 48
+      },
+      "type": "timeseries",
+      "title": "CloudWatch agent heartbeat",
+      "description": "Memory samples received per 5 minutes. P2 alarm (Engineering) when below 1 for 10 minutes: memory and disk alarms are blind without the agent.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "CWAgent",
+          "metricName": "mem_used_percent",
+          "dimensions": {
+            "InstanceId": "$instance_id"
+          },
+          "statistic": "SampleCount",
+          "period": "300",
+          "matchExact": true,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "#e8801a"
+              },
+              {
+                "value": 1,
+                "color": "#2eb67d"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    }
+  ]
+}

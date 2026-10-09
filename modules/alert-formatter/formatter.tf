@@ -11,43 +11,18 @@ data "archive_file" "formatter" {
   output_path = "${path.module}/lambda_src/slack_formatter.zip"
 }
 
-data "aws_iam_policy_document" "lambda_assume" {
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "Service"
-      identifiers = ["lambda.amazonaws.com"]
-    }
-  }
+# The webhook URL is a credential. Terraform creates only the empty secret; the value is set
+# once with `aws secretsmanager put-secret-value` (see README), so it never enters the state.
+# Skipped when slack_webhook_secret_arn points at a secret that already exists.
+resource "aws_secretsmanager_secret" "slack_webhooks" {
+  count       = var.slack_webhook_secret_arn == null ? 1 : 0
+  name        = "${local.name_prefix}-slack-webhooks"
+  description = "Slack Incoming Webhook URL(s) for the alert formatter Lambda. Value is set outside Terraform."
+  tags        = local.tags
 }
 
-resource "aws_iam_role" "formatter" {
-  name               = "${local.name_prefix}-formatter"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
-  tags               = local.tags
-}
-
-data "aws_iam_policy_document" "formatter" {
-  statement {
-    sid       = "ReadSlackToken"
-    effect    = "Allow"
-    actions   = ["secretsmanager:GetSecretValue"]
-    resources = [var.slack_bot_token_secret_arn]
-  }
-
-  statement {
-    sid       = "WriteLogs"
-    effect    = "Allow"
-    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-    resources = ["${aws_cloudwatch_log_group.formatter.arn}:*"]
-  }
-}
-
-resource "aws_iam_role_policy" "formatter" {
-  name   = "${local.name_prefix}-formatter"
-  role   = aws_iam_role.formatter.id
-  policy = data.aws_iam_policy_document.formatter.json
+locals {
+  slack_webhook_secret_arn = coalesce(var.slack_webhook_secret_arn, one(aws_secretsmanager_secret.slack_webhooks[*].arn))
 }
 
 resource "aws_cloudwatch_log_group" "formatter" {
@@ -68,25 +43,41 @@ resource "aws_lambda_function" "formatter" {
 
   environment {
     variables = {
-      SLACK_TOKEN_SECRET_ARN    = var.slack_bot_token_secret_arn
-      SLACK_CHANNEL_OPERATIONS  = var.slack_channel_operations
-      SLACK_CHANNEL_ENGINEERING = var.slack_channel_engineering
+      SLACK_WEBHOOK_SECRET_ARN = local.slack_webhook_secret_arn
     }
   }
 
   depends_on = [aws_cloudwatch_log_group.formatter, aws_iam_role_policy.formatter]
 }
 
-# Resource policy: one statement per customer account, limited to that account's alert
-# topics (<environment>-monitoring-alerts-p1/p2/p3).
+locals {
+  # Regions of customer topics that may invoke the Lambda: its own region plus var.customer_regions.
+  customer_topic_regions = distinct(concat([var.region], var.customer_regions))
+
+  # Regions that need an explicit opt-in (launched after 2019-03-20). SNS in one of these
+  # invokes a Lambda in another region as sns.<region>.amazonaws.com, not sns.amazonaws.com.
+  # https://docs.aws.amazon.com/sns/latest/dg/sns-cross-region-delivery.html
+  opt_in_regions = [
+    "af-south-1", "ap-east-1", "ap-south-2", "ap-southeast-3", "ap-southeast-4", "eu-south-1",
+    "eu-south-2", "eu-central-2", "il-central-1", "me-south-1", "me-central-1",
+  ]
+
+  customer_topic_grants = {
+    for pair in setproduct(var.customer_account_ids, local.customer_topic_regions) :
+    "${pair[0]}-${pair[1]}" => { account = pair[0], region = pair[1] }
+  }
+}
+
+# Resource policy: one statement per customer account and region, limited to that account's
+# alert topics (<environment>-monitoring-alerts-p1/p2/p3) in that region.
 resource "aws_lambda_permission" "customer_topics" {
-  for_each       = toset(var.customer_account_ids)
-  statement_id   = "AllowCustomerAlerts-${each.value}"
+  for_each       = local.customer_topic_grants
+  statement_id   = "AllowCustomerAlerts-${each.value.account}-${each.value.region}"
   action         = "lambda:InvokeFunction"
   function_name  = aws_lambda_function.formatter.function_name
-  principal      = "sns.amazonaws.com"
-  source_account = each.value
-  source_arn     = "arn:aws:sns:${var.region}:${each.value}:*-monitoring-alerts-p*"
+  principal      = contains(local.opt_in_regions, each.value.region) ? "sns.${each.value.region}.amazonaws.com" : "sns.amazonaws.com"
+  source_account = each.value.account
+  source_arn     = "arn:aws:sns:${each.value.region}:${each.value.account}:*-monitoring-alerts-p*"
 }
 
 resource "aws_lambda_permission" "own_topics" {

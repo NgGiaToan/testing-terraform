@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.5.0"
+  required_version = ">= 1.10.0"
 
   required_providers {
     aws = {
@@ -14,10 +14,10 @@ terraform {
   # keyed off github.event.pull_request.number, so every PR gets its own isolated state
   # instead of racing on a shared one.
   backend "s3" {
-    bucket         = "testing-terraform-tfstate"
-    region         = "us-east-1"
-    dynamodb_table = "testing-terraform-tflock"
-    encrypt        = true
+    bucket       = "testing-terraform-tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
+    encrypt      = true
   }
 }
 

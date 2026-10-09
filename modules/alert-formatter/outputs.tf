@@ -17,3 +17,13 @@ output "pipeline_topic_arn" {
   description = "Topic for alarms on the alert delivery path itself (email to Engineering)"
   value       = aws_sns_topic.pipeline.arn
 }
+
+output "grafana_role_arn" {
+  description = "ARN of the read-only role to enter as `Assume Role ARN` in Grafana's management-account CloudWatch data source"
+  value       = local.grafana_enabled ? aws_iam_role.grafana_read[0].arn : null
+}
+
+output "slack_webhook_secret_arn" {
+  description = "Secret holding the Slack webhook URL(s): the one this module created, or the one passed in. Set its value with `aws secretsmanager put-secret-value`."
+  value       = local.slack_webhook_secret_arn
+}

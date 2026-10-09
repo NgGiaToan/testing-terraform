@@ -1,0 +1,417 @@
+{
+  "title": "Platform",
+  "uid": "platform",
+  "tags": [
+    "lighthouse",
+    "monitoring"
+  ],
+  "schemaVersion": 39,
+  "editable": true,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "cloudwatch",
+        "label": "Customer"
+      },
+      {
+        "name": "mgmt_datasource",
+        "type": "datasource",
+        "query": "cloudwatch",
+        "label": "Management account"
+      },
+      {
+        "name": "region",
+        "type": "query",
+        "label": "Region",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "queryType": "regions",
+          "refId": "region"
+        }
+      },
+      {
+        "name": "customer",
+        "label": "Customer code",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        }
+      },
+      {
+        "name": "formatter_function",
+        "label": "Formatter Lambda",
+        "type": "textbox",
+        "query": "lighthouse-alerting-formatter",
+        "current": {
+          "text": "lighthouse-alerting-formatter",
+          "value": "lighthouse-alerting-formatter"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "type": "timeseries",
+      "title": "Quota usage %",
+      "description": "VPCs and Elastic IPs of the management account, per region. P3 above 80%, P2 above 95%.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${mgmt_datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "default",
+          "namespace": "Lighthouse/Quotas",
+          "metricName": "QuotaUsagePercent",
+          "dimensions": {
+            "Quota": "*"
+          },
+          "statistic": "Maximum",
+          "period": "300",
+          "matchExact": false,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2eb67d",
+                "value": null
+              },
+              {
+                "value": 80,
+                "color": "#f2c744"
+              },
+              {
+                "value": 95,
+                "color": "#e8801a"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "type": "timeseries",
+      "title": "AMI snapshot succeeded",
+      "description": "Daily AMI snapshot job for this customer, per hour. P1 alarm after 25 hours without a success.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "Lighthouse/Backup",
+          "metricName": "SnapshotSucceeded",
+          "dimensions": {
+            "Customer": "$customer"
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "matchExact": true,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "#d9262c"
+              },
+              {
+                "value": 1,
+                "color": "#2eb67d"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "type": "timeseries",
+      "title": "Lambda errors",
+      "description": "Alert formatter Lambda (management account). P2 alarm on any error.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${mgmt_datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "default",
+          "namespace": "AWS/Lambda",
+          "metricName": "Errors",
+          "dimensions": {
+            "FunctionName": "$formatter_function"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2eb67d",
+                "value": null
+              },
+              {
+                "value": 1,
+                "color": "#e8801a"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "type": "timeseries",
+      "title": "Lambda throttles",
+      "description": "Alert formatter Lambda (management account). P2 alarm on any throttle.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${mgmt_datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "default",
+          "namespace": "AWS/Lambda",
+          "metricName": "Throttles",
+          "dimensions": {
+            "FunctionName": "$formatter_function"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2eb67d",
+                "value": null
+              },
+              {
+                "value": 1,
+                "color": "#e8801a"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "type": "timeseries",
+      "title": "SNS delivery failures",
+      "description": "Failed notifications per priority topic in this customer account. P2 alarm (Engineering, by email) on any failure.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/SNS",
+          "metricName": "NumberOfNotificationsFailed",
+          "dimensions": {
+            "TopicName": "*"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": false,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2eb67d",
+                "value": null
+              },
+              {
+                "value": 1,
+                "color": "#e8801a"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    }
+  ]
+}

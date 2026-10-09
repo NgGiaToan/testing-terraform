@@ -82,9 +82,12 @@ pipeline topic, the budget and the cost-anomaly monitor.
   Customer cost allocation tag in Billing first.
 - **Grafana:** set `grafana_account_id` and `grafana_external_id` to create the read-only
   role (CloudWatch read only, trust limited to that account with the external ID); enter the
-  `grafana_role_arn` output as the data source's `Assume Role ARN`. Dashboards themselves
-  are not provisioned by this repo; `grafana-dashboards/infrastructure-disk-io.json` is an
-  importable "Infrastructure - Disk I/O" dashboard (EBS read/write bytes and operations,
-  dashboard only with no alarm). The first four panels use the per-instance `AWS/EC2`
-  metrics (Nitro instances only); the last four use the per-volume `AWS/EBS` metrics, which
-  also work on older instances.
+  `grafana_role_arn` output as the data source's `Assume Role ARN`. Dashboards are importable
+  JSON in `grafana-dashboards/` (Grafana → Dashboards → Import; pick the customer's data
+  source in the **Customer** dropdown): `env-overview`, `infrastructure`, `remote-access`,
+  `application`, `web-protection` and `platform`. Alarm thresholds are drawn on the panels.
+  The Infrastructure disk read/write panels (bytes and operations) are dashboard only, with no
+  alarm: the first four use the per-instance `AWS/EC2` metrics (Nitro instances only), the
+  last four use per-volume `AWS/EBS` metrics, which also work on older instances. The
+  firewall, quota and Lambda panels use a second data source for the management account
+  (`mgmt_datasource` dropdown); see `modules/alert-formatter` (`grafana_role_arn`).
