@@ -1,12 +1,15 @@
 {
-  "title": "Infrastructure",
-  "uid": "infrastructure",
+  "title": "Lighthouse - Infrastructure",
+  "uid": "lighthouse-infrastructure",
+  "description": "Instance health and capacity of one customer environment: status checks, CPU, memory, disk, disk I/O, network and the CloudWatch agent heartbeat.",
   "tags": [
     "lighthouse",
     "monitoring"
   ],
   "schemaVersion": 39,
   "editable": true,
+  "graphTooltip": 1,
+  "timezone": "browser",
   "time": {
     "from": "now-6h",
     "to": "now"
@@ -18,7 +21,35 @@
         "name": "datasource",
         "type": "datasource",
         "query": "cloudwatch",
-        "label": "Customer"
+        "label": "Data source"
+      },
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "custom",
+        "query": "dev,stg,prd",
+        "current": {
+          "text": "prd",
+          "value": "prd",
+          "selected": true
+        },
+        "options": [
+          {
+            "text": "dev",
+            "value": "dev",
+            "selected": false
+          },
+          {
+            "text": "stg",
+            "value": "stg",
+            "selected": false
+          },
+          {
+            "text": "prd",
+            "value": "prd",
+            "selected": true
+          }
+        ]
       },
       {
         "name": "region",
@@ -35,6 +66,22 @@
         }
       },
       {
+        "name": "account",
+        "label": "Customer account",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "queryType": "accounts",
+          "region": "$region",
+          "refId": "account"
+        },
+        "regex": "/^$environment-/"
+      },
+      {
         "name": "instance_id",
         "label": "Instance",
         "type": "query",
@@ -49,7 +96,8 @@
           "namespace": "AWS/EC2",
           "metricName": "CPUUtilization",
           "dimensionKey": "InstanceId",
-          "refId": "instance_id"
+          "refId": "instance_id",
+          "accountId": "$account"
         }
       },
       {
@@ -67,7 +115,8 @@
           "namespace": "AWS/EBS",
           "metricName": "VolumeReadBytes",
           "dimensionKey": "VolumeId",
-          "refId": "volume_id"
+          "refId": "volume_id",
+          "accountId": "$account"
         }
       }
     ]
@@ -105,7 +154,8 @@
           "period": "60",
           "matchExact": true,
           "label": "Instance",
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         },
         {
           "refId": "B",
@@ -123,7 +173,8 @@
           "period": "60",
           "matchExact": true,
           "label": "Attached EBS",
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {
@@ -193,7 +244,8 @@
           "statistic": "Average",
           "period": "60",
           "matchExact": true,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {
@@ -267,7 +319,8 @@
           "statistic": "Average",
           "period": "60",
           "matchExact": true,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {
@@ -341,7 +394,8 @@
           "statistic": "Average",
           "period": "300",
           "matchExact": false,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {
@@ -415,7 +469,8 @@
           "statistic": "Sum",
           "period": "300",
           "matchExact": true,
-          "hide": true
+          "hide": true,
+          "accountId": "$account"
         },
         {
           "refId": "B",
@@ -479,7 +534,8 @@
           "statistic": "Sum",
           "period": "300",
           "matchExact": true,
-          "hide": true
+          "hide": true,
+          "accountId": "$account"
         },
         {
           "refId": "B",
@@ -543,7 +599,8 @@
           "statistic": "Sum",
           "period": "300",
           "matchExact": true,
-          "hide": true
+          "hide": true,
+          "accountId": "$account"
         },
         {
           "refId": "B",
@@ -607,7 +664,8 @@
           "statistic": "Sum",
           "period": "300",
           "matchExact": true,
-          "hide": true
+          "hide": true,
+          "accountId": "$account"
         },
         {
           "refId": "B",
@@ -671,7 +729,8 @@
           "statistic": "Sum",
           "period": "300",
           "matchExact": true,
-          "hide": true
+          "hide": true,
+          "accountId": "$account"
         },
         {
           "refId": "B",
@@ -735,7 +794,8 @@
           "statistic": "Sum",
           "period": "300",
           "matchExact": true,
-          "hide": true
+          "hide": true,
+          "accountId": "$account"
         },
         {
           "refId": "B",
@@ -799,7 +859,8 @@
           "statistic": "Sum",
           "period": "300",
           "matchExact": true,
-          "hide": true
+          "hide": true,
+          "accountId": "$account"
         },
         {
           "refId": "B",
@@ -863,7 +924,8 @@
           "statistic": "Sum",
           "period": "300",
           "matchExact": true,
-          "hide": true
+          "hide": true,
+          "accountId": "$account"
         },
         {
           "refId": "B",
@@ -927,7 +989,8 @@
           "statistic": "Sum",
           "period": "300",
           "matchExact": true,
-          "hide": true
+          "hide": true,
+          "accountId": "$account"
         },
         {
           "refId": "B",
@@ -944,7 +1007,8 @@
           "statistic": "Sum",
           "period": "300",
           "matchExact": true,
-          "hide": true
+          "hide": true,
+          "accountId": "$account"
         },
         {
           "refId": "C",
@@ -1020,7 +1084,8 @@
           "statistic": "SampleCount",
           "period": "300",
           "matchExact": true,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {

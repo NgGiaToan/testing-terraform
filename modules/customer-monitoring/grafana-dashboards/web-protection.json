@@ -1,12 +1,15 @@
 {
-  "title": "Web Protection",
-  "uid": "web-protection",
+  "title": "Lighthouse - Web Protection",
+  "uid": "lighthouse-web-protection",
+  "description": "WAF, Network Firewall and certificates: allowed and blocked requests, passed and dropped packets, and days to certificate expiry.",
   "tags": [
     "lighthouse",
     "monitoring"
   ],
   "schemaVersion": 39,
   "editable": true,
+  "graphTooltip": 1,
+  "timezone": "browser",
   "time": {
     "from": "now-6h",
     "to": "now"
@@ -18,13 +21,41 @@
         "name": "datasource",
         "type": "datasource",
         "query": "cloudwatch",
-        "label": "Customer"
+        "label": "Data source"
       },
       {
         "name": "mgmt_datasource",
         "type": "datasource",
         "query": "cloudwatch",
         "label": "Management account"
+      },
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "custom",
+        "query": "dev,stg,prd",
+        "current": {
+          "text": "prd",
+          "value": "prd",
+          "selected": true
+        },
+        "options": [
+          {
+            "text": "dev",
+            "value": "dev",
+            "selected": false
+          },
+          {
+            "text": "stg",
+            "value": "stg",
+            "selected": false
+          },
+          {
+            "text": "prd",
+            "value": "prd",
+            "selected": true
+          }
+        ]
       },
       {
         "name": "region",
@@ -41,6 +72,22 @@
         }
       },
       {
+        "name": "account",
+        "label": "Customer account",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "queryType": "accounts",
+          "region": "$region",
+          "refId": "account"
+        },
+        "regex": "/^$environment-/"
+      },
+      {
         "name": "waf_web_acl",
         "label": "Web ACL",
         "type": "query",
@@ -55,7 +102,8 @@
           "namespace": "AWS/WAFV2",
           "metricName": "BlockedRequests",
           "dimensionKey": "WebACL",
-          "refId": "waf_web_acl"
+          "refId": "waf_web_acl",
+          "accountId": "$account"
         }
       },
       {
@@ -69,7 +117,7 @@
         },
         "query": {
           "queryType": "dimensionValues",
-          "region": "default",
+          "region": "$region",
           "namespace": "AWS/NetworkFirewall",
           "metricName": "DroppedPackets",
           "dimensionKey": "FirewallName",
@@ -113,7 +161,8 @@
           "period": "300",
           "matchExact": true,
           "label": "Allowed",
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         },
         {
           "refId": "B",
@@ -133,7 +182,8 @@
           "period": "300",
           "matchExact": true,
           "label": "Blocked",
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {
@@ -187,7 +237,8 @@
           "statistic": "Sum",
           "period": "300",
           "matchExact": false,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {
@@ -230,7 +281,7 @@
           "queryMode": "Metrics",
           "metricQueryType": 0,
           "metricEditorMode": 0,
-          "region": "default",
+          "region": "$region",
           "namespace": "AWS/NetworkFirewall",
           "metricName": "PassedPackets",
           "dimensions": {
@@ -249,7 +300,7 @@
           "queryMode": "Metrics",
           "metricQueryType": 0,
           "metricEditorMode": 0,
-          "region": "default",
+          "region": "$region",
           "namespace": "AWS/NetworkFirewall",
           "metricName": "DroppedPackets",
           "dimensions": {
@@ -312,7 +363,8 @@
           "statistic": "Minimum",
           "period": "86400",
           "matchExact": false,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {

@@ -1,12 +1,15 @@
 {
-  "title": "Remote Access",
-  "uid": "remote-access",
+  "title": "Lighthouse - Remote Access",
+  "uid": "lighthouse-remote-access",
+  "description": "OpenVPN availability behind the network load balancer: healthy targets, active connections and new connections.",
   "tags": [
     "lighthouse",
     "monitoring"
   ],
   "schemaVersion": 39,
   "editable": true,
+  "graphTooltip": 1,
+  "timezone": "browser",
   "time": {
     "from": "now-6h",
     "to": "now"
@@ -18,7 +21,35 @@
         "name": "datasource",
         "type": "datasource",
         "query": "cloudwatch",
-        "label": "Customer"
+        "label": "Data source"
+      },
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "custom",
+        "query": "dev,stg,prd",
+        "current": {
+          "text": "prd",
+          "value": "prd",
+          "selected": true
+        },
+        "options": [
+          {
+            "text": "dev",
+            "value": "dev",
+            "selected": false
+          },
+          {
+            "text": "stg",
+            "value": "stg",
+            "selected": false
+          },
+          {
+            "text": "prd",
+            "value": "prd",
+            "selected": true
+          }
+        ]
       },
       {
         "name": "region",
@@ -35,6 +66,22 @@
         }
       },
       {
+        "name": "account",
+        "label": "Customer account",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "queryType": "accounts",
+          "region": "$region",
+          "refId": "account"
+        },
+        "regex": "/^$environment-/"
+      },
+      {
         "name": "nlb",
         "label": "Network load balancer",
         "type": "query",
@@ -49,12 +96,13 @@
           "namespace": "AWS/NetworkELB",
           "metricName": "HealthyHostCount",
           "dimensionKey": "LoadBalancer",
-          "refId": "nlb"
+          "refId": "nlb",
+          "accountId": "$account"
         }
       },
       {
         "name": "nlb_target_group",
-        "label": "OpenVPN target group",
+        "label": "OpenVPN target groups",
         "type": "query",
         "refresh": 1,
         "datasource": {
@@ -67,8 +115,11 @@
           "namespace": "AWS/NetworkELB",
           "metricName": "HealthyHostCount",
           "dimensionKey": "TargetGroup",
-          "refId": "nlb_target_group"
-        }
+          "refId": "nlb_target_group",
+          "accountId": "$account"
+        },
+        "multi": true,
+        "includeAll": true
       }
     ]
   },
@@ -83,7 +134,7 @@
       },
       "type": "timeseries",
       "title": "Healthy targets",
-      "description": "Healthy hosts in the OpenVPN target group. The group has one host, so 0 means no VPN (P1 alarm after 3 minutes).",
+      "description": "Healthy hosts per selected OpenVPN target group (one line each). 0 on a line means no VPN through that group (P1 alarm after 3 minutes).",
       "datasource": {
         "type": "cloudwatch",
         "uid": "${datasource}"
@@ -100,12 +151,15 @@
           "metricName": "HealthyHostCount",
           "dimensions": {
             "LoadBalancer": "$nlb",
-            "TargetGroup": "$nlb_target_group"
+            "TargetGroup": [
+              "$nlb_target_group"
+            ]
           },
           "statistic": "Minimum",
           "period": "60",
           "matchExact": true,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {
@@ -170,12 +224,15 @@
           "metricName": "ActiveFlowCount",
           "dimensions": {
             "LoadBalancer": "$nlb",
-            "TargetGroup": "$nlb_target_group"
+            "TargetGroup": [
+              "$nlb_target_group"
+            ]
           },
           "statistic": "Average",
           "period": "300",
           "matchExact": true,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {
@@ -223,12 +280,15 @@
           "metricName": "NewFlowCount",
           "dimensions": {
             "LoadBalancer": "$nlb",
-            "TargetGroup": "$nlb_target_group"
+            "TargetGroup": [
+              "$nlb_target_group"
+            ]
           },
           "statistic": "Sum",
           "period": "3600",
           "matchExact": true,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {

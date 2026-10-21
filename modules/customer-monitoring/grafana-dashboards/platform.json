@@ -1,12 +1,15 @@
 {
-  "title": "Platform",
-  "uid": "platform",
+  "title": "Lighthouse - Platform",
+  "uid": "lighthouse-platform",
+  "description": "Management-account quotas, backups and alert delivery: quota usage, last AMI snapshot, Lambda errors and throttles, and SNS delivery failures.",
   "tags": [
     "lighthouse",
     "monitoring"
   ],
   "schemaVersion": 39,
   "editable": true,
+  "graphTooltip": 1,
+  "timezone": "browser",
   "time": {
     "from": "now-6h",
     "to": "now"
@@ -18,13 +21,41 @@
         "name": "datasource",
         "type": "datasource",
         "query": "cloudwatch",
-        "label": "Customer"
+        "label": "Data source"
       },
       {
         "name": "mgmt_datasource",
         "type": "datasource",
         "query": "cloudwatch",
         "label": "Management account"
+      },
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "custom",
+        "query": "dev,stg,prd",
+        "current": {
+          "text": "prd",
+          "value": "prd",
+          "selected": true
+        },
+        "options": [
+          {
+            "text": "dev",
+            "value": "dev",
+            "selected": false
+          },
+          {
+            "text": "stg",
+            "value": "stg",
+            "selected": false
+          },
+          {
+            "text": "prd",
+            "value": "prd",
+            "selected": true
+          }
+        ]
       },
       {
         "name": "region",
@@ -41,6 +72,22 @@
         }
       },
       {
+        "name": "account",
+        "label": "Customer account",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "queryType": "accounts",
+          "region": "$region",
+          "refId": "account"
+        },
+        "regex": "/^$environment-/"
+      },
+      {
         "name": "customer",
         "label": "Customer code",
         "type": "textbox",
@@ -48,16 +95,6 @@
         "current": {
           "text": "",
           "value": ""
-        }
-      },
-      {
-        "name": "formatter_function",
-        "label": "Formatter Lambda",
-        "type": "textbox",
-        "query": "lighthouse-alerting-formatter",
-        "current": {
-          "text": "lighthouse-alerting-formatter",
-          "value": "lighthouse-alerting-formatter"
         }
       }
     ]
@@ -85,7 +122,7 @@
           "queryMode": "Metrics",
           "metricQueryType": 0,
           "metricEditorMode": 0,
-          "region": "default",
+          "region": "$region",
           "namespace": "Lighthouse/Quotas",
           "metricName": "QuotaUsagePercent",
           "dimensions": {
@@ -168,7 +205,8 @@
           "statistic": "Sum",
           "period": "3600",
           "matchExact": true,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {
@@ -216,7 +254,7 @@
       },
       "type": "timeseries",
       "title": "Lambda errors",
-      "description": "Alert formatter Lambda (management account). P2 alarm on any error.",
+      "description": "Alert formatter Lambda of one environment and region (management account); change Environment or Region to see another. P2 alarm on any error.",
       "datasource": {
         "type": "cloudwatch",
         "uid": "${mgmt_datasource}"
@@ -228,11 +266,11 @@
           "queryMode": "Metrics",
           "metricQueryType": 0,
           "metricEditorMode": 0,
-          "region": "default",
+          "region": "$region",
           "namespace": "AWS/Lambda",
           "metricName": "Errors",
           "dimensions": {
-            "FunctionName": "$formatter_function"
+            "FunctionName": "lighthouse-alerting-$environment-$region-formatter"
           },
           "statistic": "Sum",
           "period": "300",
@@ -285,7 +323,7 @@
       },
       "type": "timeseries",
       "title": "Lambda throttles",
-      "description": "Alert formatter Lambda (management account). P2 alarm on any throttle.",
+      "description": "Alert formatter Lambda of one environment and region (management account); change Environment or Region to see another. P2 alarm on any throttle.",
       "datasource": {
         "type": "cloudwatch",
         "uid": "${mgmt_datasource}"
@@ -297,11 +335,11 @@
           "queryMode": "Metrics",
           "metricQueryType": 0,
           "metricEditorMode": 0,
-          "region": "default",
+          "region": "$region",
           "namespace": "AWS/Lambda",
           "metricName": "Throttles",
           "dimensions": {
-            "FunctionName": "$formatter_function"
+            "FunctionName": "lighthouse-alerting-$environment-$region-formatter"
           },
           "statistic": "Sum",
           "period": "300",
@@ -354,10 +392,10 @@
       },
       "type": "timeseries",
       "title": "SNS delivery failures",
-      "description": "Failed notifications per priority topic in this customer account. P2 alarm (Engineering, by email) on any failure.",
+      "description": "Failed notifications of the three priority topics of the chosen Environment and Region (management account). P2 alarm (Engineering) on any failure.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "${datasource}"
+        "uid": "${mgmt_datasource}"
       },
       "targets": [
         {
@@ -370,11 +408,45 @@
           "namespace": "AWS/SNS",
           "metricName": "NumberOfNotificationsFailed",
           "dimensions": {
-            "TopicName": "*"
+            "TopicName": "lighthouse-alerting-$environment-$region-alerts-p1"
           },
           "statistic": "Sum",
           "period": "300",
-          "matchExact": false,
+          "matchExact": true,
+          "hide": false
+        },
+        {
+          "refId": "B",
+          "id": "b",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/SNS",
+          "metricName": "NumberOfNotificationsFailed",
+          "dimensions": {
+            "TopicName": "lighthouse-alerting-$environment-$region-alerts-p2"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
+          "hide": false
+        },
+        {
+          "refId": "C",
+          "id": "c",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/SNS",
+          "metricName": "NumberOfNotificationsFailed",
+          "dimensions": {
+            "TopicName": "lighthouse-alerting-$environment-$region-alerts-p3"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
           "hide": false
         }
       ],

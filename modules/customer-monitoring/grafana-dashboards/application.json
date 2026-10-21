@@ -1,12 +1,15 @@
 {
-  "title": "Application",
-  "uid": "application",
+  "title": "Lighthouse - Application",
+  "uid": "lighthouse-application",
+  "description": "Lighthouse application health: canaries, load balancer response time, request rate, 5xx rate and healthy targets.",
   "tags": [
     "lighthouse",
     "monitoring"
   ],
   "schemaVersion": 39,
   "editable": true,
+  "graphTooltip": 1,
+  "timezone": "browser",
   "time": {
     "from": "now-6h",
     "to": "now"
@@ -18,7 +21,35 @@
         "name": "datasource",
         "type": "datasource",
         "query": "cloudwatch",
-        "label": "Customer"
+        "label": "Data source"
+      },
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "custom",
+        "query": "dev,stg,prd",
+        "current": {
+          "text": "prd",
+          "value": "prd",
+          "selected": true
+        },
+        "options": [
+          {
+            "text": "dev",
+            "value": "dev",
+            "selected": false
+          },
+          {
+            "text": "stg",
+            "value": "stg",
+            "selected": false
+          },
+          {
+            "text": "prd",
+            "value": "prd",
+            "selected": true
+          }
+        ]
       },
       {
         "name": "region",
@@ -35,6 +66,22 @@
         }
       },
       {
+        "name": "account",
+        "label": "Customer account",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "queryType": "accounts",
+          "region": "$region",
+          "refId": "account"
+        },
+        "regex": "/^$environment-/"
+      },
+      {
         "name": "https_canary",
         "label": "HTTPS canary",
         "type": "query",
@@ -49,7 +96,8 @@
           "namespace": "CloudWatchSynthetics",
           "metricName": "SuccessPercent",
           "dimensionKey": "CanaryName",
-          "refId": "https_canary"
+          "refId": "https_canary",
+          "accountId": "$account"
         }
       },
       {
@@ -67,7 +115,8 @@
           "namespace": "CloudWatchSynthetics",
           "metricName": "SuccessPercent",
           "dimensionKey": "CanaryName",
-          "refId": "workflow_canary"
+          "refId": "workflow_canary",
+          "accountId": "$account"
         }
       },
       {
@@ -85,7 +134,8 @@
           "namespace": "AWS/ApplicationELB",
           "metricName": "RequestCount",
           "dimensionKey": "LoadBalancer",
-          "refId": "alb"
+          "refId": "alb",
+          "accountId": "$account"
         }
       },
       {
@@ -103,7 +153,8 @@
           "namespace": "AWS/ApplicationELB",
           "metricName": "HealthyHostCount",
           "dimensionKey": "TargetGroup",
-          "refId": "target_group"
+          "refId": "target_group",
+          "accountId": "$account"
         }
       }
     ]
@@ -140,7 +191,8 @@
           "statistic": "Average",
           "period": "60",
           "matchExact": true,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {
@@ -210,7 +262,8 @@
           "statistic": "p95",
           "period": "60",
           "matchExact": true,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {
@@ -279,7 +332,8 @@
           "statistic": "Sum",
           "period": "60",
           "matchExact": true,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {
@@ -331,7 +385,8 @@
           "statistic": "Sum",
           "period": "60",
           "matchExact": true,
-          "hide": true
+          "hide": true,
+          "accountId": "$account"
         },
         {
           "refId": "B",
@@ -348,7 +403,8 @@
           "statistic": "Sum",
           "period": "60",
           "matchExact": true,
-          "hide": true
+          "hide": true,
+          "accountId": "$account"
         },
         {
           "refId": "C",
@@ -365,7 +421,8 @@
           "statistic": "Sum",
           "period": "60",
           "matchExact": true,
-          "hide": true
+          "hide": true,
+          "accountId": "$account"
         },
         {
           "refId": "D",
@@ -447,7 +504,8 @@
           "statistic": "Minimum",
           "period": "60",
           "matchExact": true,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {
@@ -516,7 +574,8 @@
           "statistic": "Average",
           "period": "300",
           "matchExact": true,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {

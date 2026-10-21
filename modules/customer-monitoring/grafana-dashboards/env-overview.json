@@ -1,12 +1,15 @@
 {
-  "title": "Environment Overview",
-  "uid": "env-overview",
+  "title": "Lighthouse - Environment Overview",
+  "uid": "lighthouse-env-overview",
+  "description": "Status of one customer environment: uptime over 24 hours, 7 days and 30 days, and the HTTPS and workflow canary results.",
   "tags": [
     "lighthouse",
     "monitoring"
   ],
   "schemaVersion": 39,
   "editable": true,
+  "graphTooltip": 1,
+  "timezone": "browser",
   "time": {
     "from": "now-6h",
     "to": "now"
@@ -18,7 +21,35 @@
         "name": "datasource",
         "type": "datasource",
         "query": "cloudwatch",
-        "label": "Customer"
+        "label": "Data source"
+      },
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "custom",
+        "query": "dev,stg,prd",
+        "current": {
+          "text": "prd",
+          "value": "prd",
+          "selected": true
+        },
+        "options": [
+          {
+            "text": "dev",
+            "value": "dev",
+            "selected": false
+          },
+          {
+            "text": "stg",
+            "value": "stg",
+            "selected": false
+          },
+          {
+            "text": "prd",
+            "value": "prd",
+            "selected": true
+          }
+        ]
       },
       {
         "name": "region",
@@ -35,6 +66,22 @@
         }
       },
       {
+        "name": "account",
+        "label": "Customer account",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "queryType": "accounts",
+          "region": "$region",
+          "refId": "account"
+        },
+        "regex": "/^$environment-/"
+      },
+      {
         "name": "https_canary",
         "label": "HTTPS canary",
         "type": "query",
@@ -49,7 +96,8 @@
           "namespace": "CloudWatchSynthetics",
           "metricName": "SuccessPercent",
           "dimensionKey": "CanaryName",
-          "refId": "https_canary"
+          "refId": "https_canary",
+          "accountId": "$account"
         }
       },
       {
@@ -67,7 +115,8 @@
           "namespace": "CloudWatchSynthetics",
           "metricName": "SuccessPercent",
           "dimensionKey": "CanaryName",
-          "refId": "workflow_canary"
+          "refId": "workflow_canary",
+          "accountId": "$account"
         }
       }
     ]
@@ -104,7 +153,8 @@
           "statistic": "Average",
           "period": "3600",
           "matchExact": true,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "timeFrom": "24h",
@@ -176,7 +226,8 @@
           "statistic": "Average",
           "period": "3600",
           "matchExact": true,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "timeFrom": "7d",
@@ -248,7 +299,8 @@
           "statistic": "Average",
           "period": "3600",
           "matchExact": true,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "timeFrom": "30d",
@@ -320,7 +372,8 @@
           "statistic": "Average",
           "period": "60",
           "matchExact": true,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {
@@ -390,7 +443,8 @@
           "statistic": "Average",
           "period": "300",
           "matchExact": true,
-          "hide": false
+          "hide": false,
+          "accountId": "$account"
         }
       ],
       "fieldConfig": {
