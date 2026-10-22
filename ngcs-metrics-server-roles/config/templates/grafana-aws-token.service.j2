@@ -1,0 +1,19 @@
+# Managed by Ansible (role config, template grafana-aws-token.service.j2)
+[Unit]
+Description=Fetch an Azure Managed Identity token for the AWS web identity federation of Grafana
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group={{ grafana_group }}
+UMask=0027
+# /run/<name>: owned by root:{{ grafana_group }}, mode 0750, kept between runs, so Grafana can read the token file in it.
+RuntimeDirectory={{ aws_token_file | dirname | basename }}
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+Environment="AZURE_AUDIENCE={{ azure_audience }}"
+Environment="AZURE_CLIENT_ID={{ azure_mi_client_id }}"
+Environment="TOKEN_FILE={{ aws_token_file }}"
+ExecStart=/usr/local/bin/grafana-aws-token.sh

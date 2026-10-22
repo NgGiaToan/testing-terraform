@@ -1,0 +1,28 @@
+---
+# Handlers run in the order written here: systemd first, then the token, then Grafana, then the data sources.
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Fetch AWS token
+  ansible.builtin.systemd:
+    name: grafana-aws-token.service
+    state: started
+
+- name: Restart grafana
+  ansible.builtin.systemd:
+    name: "{{ grafana_service_name }}"
+    state: restarted
+
+- name: Reload grafana datasources
+  ansible.builtin.uri:
+    url: "{{ grafana_url }}/api/admin/provisioning/datasources/reload"
+    method: POST
+    user: "{{ grafana_admin_user }}"
+    password: "{{ grafana_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: grafana_reload
+  retries: 5
+  delay: 3
+  until: grafana_reload.status == 200

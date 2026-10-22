@@ -1,0 +1,49 @@
+---
+# Example of the values to pass to the role. Copy it outside the repo (or to group_vars/grafana.yml) and fill it in.
+# The comment of each value says where it comes from.
+
+# --- Prometheus ---------------------------------------------------------------------------------------------
+# Already in your current setup: the old datasources.yaml.j2 used these variables, copy the values from the
+# group_vars / vars of that repo. Otherwise: Grafana > Connections > Data sources > Prometheus > URL.
+prometheus_url: http://prometheus.internal:9090
+# `prometheus --version` on the Prometheus server (same source as the old prometheus_version).
+prometheus_version: 2.54.0
+# The uid of the data source that exists now. Grafana > Connections > Data sources > Prometheus: the address is
+# /connections/datasources/edit/<uid>. Or: curl -u admin:<password> <grafana url>/api/datasources  (field "uid").
+# Do not invent a new one for an existing data source (prune: true would delete the old one).
+prometheus_uid: "<existing uid>"
+
+# --- Azure Monitor ------------------------------------------------------------------------------------------
+# Already in your current setup (old azure_subscription_id). Otherwise: Azure portal > Subscriptions,
+# or `az account show --query id -o tsv`.
+azure_subscription_id: "<azure subscription id>"
+# Same way as prometheus_uid, from the Azure Monitor data source.
+azure_monitor_uid: "<existing uid>"
+
+# --- CloudWatch ---------------------------------------------------------------------------------------------
+cloudwatch_enabled: true
+# The region of the sink: the region where environment/shr-monitoring is deployed (its `region` input).
+# Also readable in the sink ARN: `terraform output oam_sink_arn` -> arn:aws:oam:<region>:<account>:sink/<id>
+cloudwatch_default_region: ap-southeast-2
+# cloudwatch_uid: lighthouse-cw-management     # a fixed name chosen by convention, nobody issues it; keep the default
+
+# --- AWS identity of the Grafana service (Managed Identity federation) --------------------------------------
+# Needed while aws_federation_enabled is true (it follows cloudwatch_enabled). The Azure values come from the
+# Azure owner, the role from the AWS stack; they are the same values as in environment/shr-grafana-federation.
+#
+# `terraform output grafana_federated_role_arn` in environment/shr-grafana-federation.
+aws_role_arn: "arn:aws:iam::<management account id>:role/lighthouse-alerting-grafana-federated"
+# Client ID of the user-assigned Managed Identity attached to this VM (Azure portal > Managed Identities >
+# Overview > Client ID). Not the object (principal) ID: that one is grafana_azure_subject in the AWS stack.
+azure_mi_client_id: "<client id of the Managed Identity>"
+# The audience of the token: the Application ID URI of the Entra app registration made for AWS. It must be the same
+# value as grafana_azure_audience in environment/shr-grafana-federation.
+azure_audience: "api://aws-sts"
+
+# --- Secret -------------------------------------------------------------------------------------------------
+# grafana_admin_password: the admin password of the Grafana server (the one you log in with, or the
+# admin_password of /etc/grafana/grafana.ini). Not here in clear text: Ansible Vault or the environment
+# (see playbook.example.yml).
+#   ansible-vault encrypt_string '<password>' --name grafana_admin_password
+# grafana_admin_password: !vault |
+

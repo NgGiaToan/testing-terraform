@@ -1,0 +1,11 @@
+# Managed by Ansible (role config, template grafana-aws-federation.conf.j2)
+# Gives the Grafana service an AWS identity: AWS SDK Default (authType: default of the CloudWatch data source)
+# sees these variables and calls sts:AssumeRoleWithWebIdentity with the token in the file.
+[Unit]
+Wants=grafana-aws-token.service
+After=grafana-aws-token.service
+
+[Service]
+Environment="AWS_ROLE_ARN={{ aws_role_arn }}"
+Environment="AWS_WEB_IDENTITY_TOKEN_FILE={{ aws_token_file }}"
+Environment="AWS_REGION={{ aws_region }}"

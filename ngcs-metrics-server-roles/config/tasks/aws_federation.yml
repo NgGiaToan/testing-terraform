@@ -1,0 +1,79 @@
+---
+# Gives the Grafana service an AWS identity (Azure Managed Identity -> AWS web identity federation), so that the
+# CloudWatch data source with authType: default works. The AWS side is environment/shr-grafana-federation.
+
+- name: Install curl and jq (token script)
+  ansible.builtin.package:
+    name:
+      - curl
+      - jq
+    state: present
+
+- name: Install the token script
+  ansible.builtin.copy:
+    src: grafana-aws-token.sh
+    dest: /usr/local/bin/grafana-aws-token.sh
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Fetch AWS token
+
+- name: Install the token service and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - grafana-aws-token.service
+    - grafana-aws-token.timer
+  notify:
+    - Reload systemd
+    - Fetch AWS token
+
+- name: Create the drop-in directory of the Grafana service
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ grafana_service_name }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Give the Grafana service its AWS environment
+  ansible.builtin.template:
+    src: grafana-aws-federation.conf.j2
+    dest: "/etc/systemd/system/{{ grafana_service_name }}.service.d/aws-federation.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart grafana
+
+# Units known to systemd, first token written and Grafana restarted with the new environment
+# before the checks below.
+- name: Apply the pending changes now
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the token timer
+  ansible.builtin.systemd:
+    name: grafana-aws-token.timer
+    enabled: true
+    state: started
+
+- name: Check that the token file exists and Grafana can read it
+  ansible.builtin.stat:
+    path: "{{ aws_token_file }}"
+  register: aws_token_stat
+
+- name: Stop if there is no token
+  ansible.builtin.assert:
+    that:
+      - aws_token_stat.stat.exists
+      - aws_token_stat.stat.gr_name == grafana_group
+      - aws_token_stat.stat.size > 0
+    fail_msg: >-
+      {{ aws_token_file }} is missing, empty or not owned by group {{ grafana_group }}. Look at
+      `journalctl -u grafana-aws-token.service` (Azure metadata service, azure_mi_client_id and azure_audience).
+    quiet: true
