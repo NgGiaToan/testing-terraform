@@ -2,10 +2,6 @@
   "title": "Lighthouse - Application",
   "uid": "lighthouse-application",
   "description": "Lighthouse application health: canaries, load balancer response time, request rate, 5xx rate and healthy targets.",
-  "tags": [
-    "lighthouse",
-    "monitoring"
-  ],
   "schemaVersion": 39,
   "editable": true,
   "graphTooltip": 1,
@@ -18,143 +14,80 @@
   "templating": {
     "list": [
       {
-        "name": "datasource",
-        "type": "datasource",
-        "query": "cloudwatch",
-        "label": "Data source"
-      },
-      {
-        "name": "environment",
-        "label": "Environment",
-        "type": "custom",
-        "query": "dev,stg,prd",
-        "current": {
-          "text": "prd",
-          "value": "prd",
-          "selected": true
-        },
-        "options": [
-          {
-            "text": "dev",
-            "value": "dev",
-            "selected": false
-          },
-          {
-            "text": "stg",
-            "value": "stg",
-            "selected": false
-          },
-          {
-            "text": "prd",
-            "value": "prd",
-            "selected": true
-          }
-        ]
-      },
-      {
         "name": "region",
-        "type": "query",
         "label": "Region",
+        "type": "query",
         "refresh": 1,
         "datasource": {
           "type": "cloudwatch",
-          "uid": "${datasource}"
+          "uid": "8s123msinglish"
+        },
+        "current": {
+          "text": "ap-southeast-2",
+          "value": "ap-southeast-2",
+          "selected": true
         },
         "query": {
-          "queryType": "regions",
+          "queryType": "ec2InstanceAttributes",
+          "region": "default",
+          "attributeName": "Tags.region",
+          "ec2Filters": {},
           "refId": "region"
         }
       },
       {
-        "name": "account",
-        "label": "Customer account",
+        "name": "environment",
+        "label": "Environment",
         "type": "query",
         "refresh": 1,
         "datasource": {
           "type": "cloudwatch",
-          "uid": "${datasource}"
+          "uid": "8s123msinglish"
+        },
+        "current": {
+          "text": "production",
+          "value": "production",
+          "selected": true
         },
         "query": {
-          "queryType": "accounts",
+          "queryType": "ec2InstanceAttributes",
           "region": "$region",
-          "refId": "account"
-        },
-        "regex": "/^$environment-/"
-      },
-      {
-        "name": "https_canary",
-        "label": "HTTPS canary",
-        "type": "query",
-        "refresh": 1,
-        "datasource": {
-          "type": "cloudwatch",
-          "uid": "${datasource}"
-        },
-        "query": {
-          "queryType": "dimensionValues",
-          "region": "$region",
-          "namespace": "CloudWatchSynthetics",
-          "metricName": "SuccessPercent",
-          "dimensionKey": "CanaryName",
-          "refId": "https_canary",
-          "accountId": "$account"
+          "attributeName": "Tags.Environment",
+          "ec2Filters": {},
+          "refId": "environment"
         }
       },
       {
-        "name": "workflow_canary",
-        "label": "Workflow canary",
+        "name": "instance",
+        "label": "Instance",
         "type": "query",
         "refresh": 1,
         "datasource": {
           "type": "cloudwatch",
-          "uid": "${datasource}"
+          "uid": "8s123msinglish"
         },
         "query": {
-          "queryType": "dimensionValues",
+          "queryType": "ec2InstanceAttributes",
           "region": "$region",
-          "namespace": "CloudWatchSynthetics",
-          "metricName": "SuccessPercent",
-          "dimensionKey": "CanaryName",
-          "refId": "workflow_canary",
-          "accountId": "$account"
-        }
-      },
-      {
-        "name": "alb",
-        "label": "Application load balancer",
-        "type": "query",
-        "refresh": 1,
-        "datasource": {
-          "type": "cloudwatch",
-          "uid": "${datasource}"
+          "attributeName": "Tags.Instance",
+          "ec2Filters": {
+            "tag:Environment": [
+              "$environment"
+            ]
+          },
+          "refId": "instance"
         },
-        "query": {
-          "queryType": "dimensionValues",
-          "region": "$region",
-          "namespace": "AWS/ApplicationELB",
-          "metricName": "RequestCount",
-          "dimensionKey": "LoadBalancer",
-          "refId": "alb",
-          "accountId": "$account"
-        }
-      },
-      {
-        "name": "target_group",
-        "label": "Target group",
-        "type": "query",
-        "refresh": 1,
-        "datasource": {
-          "type": "cloudwatch",
-          "uid": "${datasource}"
-        },
-        "query": {
-          "queryType": "dimensionValues",
-          "region": "$region",
-          "namespace": "AWS/ApplicationELB",
-          "metricName": "HealthyHostCount",
-          "dimensionKey": "TargetGroup",
-          "refId": "target_group",
-          "accountId": "$account"
+        "includeAll": true,
+        "allValue": "*",
+        "multi": true,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
         }
       }
     ]
@@ -173,7 +106,7 @@
       "description": "SuccessPercent 100 means HTTP 200 on port 443. For the failure reason (DNS, TLS, WAF, load balancer, application) open the run in CloudWatch Synthetics.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "${datasource}"
+        "uid": "8s123msinglish"
       },
       "targets": [
         {
@@ -186,13 +119,14 @@
           "namespace": "CloudWatchSynthetics",
           "metricName": "SuccessPercent",
           "dimensions": {
-            "CanaryName": "$https_canary"
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
           },
           "statistic": "Average",
           "period": "60",
-          "matchExact": true,
-          "hide": false,
-          "accountId": "$account"
+          "matchExact": false,
+          "hide": false
         }
       ],
       "fieldConfig": {
@@ -210,11 +144,11 @@
             "steps": [
               {
                 "value": null,
-                "color": "#d9262c"
+                "color": "red"
               },
               {
                 "value": 100,
-                "color": "#2eb67d"
+                "color": "green"
               }
             ]
           }
@@ -244,7 +178,7 @@
       "description": "P2 alarm above 0.3 s for 10 minutes.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "${datasource}"
+        "uid": "8s123msinglish"
       },
       "targets": [
         {
@@ -257,13 +191,14 @@
           "namespace": "AWS/ApplicationELB",
           "metricName": "TargetResponseTime",
           "dimensions": {
-            "LoadBalancer": "$alb"
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
           },
           "statistic": "p95",
           "period": "60",
-          "matchExact": true,
-          "hide": false,
-          "accountId": "$account"
+          "matchExact": false,
+          "hide": false
         }
       ],
       "fieldConfig": {
@@ -279,12 +214,12 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#2eb67d",
+                "color": "green",
                 "value": null
               },
               {
                 "value": 0.3,
-                "color": "#e8801a"
+                "color": "orange"
               }
             ]
           }
@@ -314,7 +249,7 @@
       "description": "Requests per minute. P3 alarm above the expected range for 10 minutes.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "${datasource}"
+        "uid": "8s123msinglish"
       },
       "targets": [
         {
@@ -327,13 +262,14 @@
           "namespace": "AWS/ApplicationELB",
           "metricName": "RequestCount",
           "dimensions": {
-            "LoadBalancer": "$alb"
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
           },
           "statistic": "Sum",
           "period": "60",
-          "matchExact": true,
-          "hide": false,
-          "accountId": "$account"
+          "matchExact": false,
+          "hide": false
         }
       ],
       "fieldConfig": {
@@ -367,7 +303,7 @@
       "description": "(Target 5xx + ELB 5xx) / requests x 100, only when the minute had at least 50 requests. P2 alarm above 5% for 5 minutes.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "${datasource}"
+        "uid": "8s123msinglish"
       },
       "targets": [
         {
@@ -380,13 +316,14 @@
           "namespace": "AWS/ApplicationELB",
           "metricName": "HTTPCode_Target_5XX_Count",
           "dimensions": {
-            "LoadBalancer": "$alb"
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
           },
           "statistic": "Sum",
           "period": "60",
-          "matchExact": true,
-          "hide": true,
-          "accountId": "$account"
+          "matchExact": false,
+          "hide": true
         },
         {
           "refId": "B",
@@ -398,13 +335,14 @@
           "namespace": "AWS/ApplicationELB",
           "metricName": "HTTPCode_ELB_5XX_Count",
           "dimensions": {
-            "LoadBalancer": "$alb"
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
           },
           "statistic": "Sum",
           "period": "60",
-          "matchExact": true,
-          "hide": true,
-          "accountId": "$account"
+          "matchExact": false,
+          "hide": true
         },
         {
           "refId": "C",
@@ -416,13 +354,14 @@
           "namespace": "AWS/ApplicationELB",
           "metricName": "RequestCount",
           "dimensions": {
-            "LoadBalancer": "$alb"
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
           },
           "statistic": "Sum",
           "period": "60",
-          "matchExact": true,
-          "hide": true,
-          "accountId": "$account"
+          "matchExact": false,
+          "hide": true
         },
         {
           "refId": "D",
@@ -450,12 +389,12 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#2eb67d",
+                "color": "green",
                 "value": null
               },
               {
                 "value": 5,
-                "color": "#e8801a"
+                "color": "orange"
               }
             ]
           }
@@ -485,7 +424,7 @@
       "description": "Healthy hosts in the application target group. P1 alarm when any target is unhealthy for 3 minutes.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "${datasource}"
+        "uid": "8s123msinglish"
       },
       "targets": [
         {
@@ -498,14 +437,14 @@
           "namespace": "AWS/ApplicationELB",
           "metricName": "HealthyHostCount",
           "dimensions": {
-            "LoadBalancer": "$alb",
-            "TargetGroup": "$target_group"
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
           },
           "statistic": "Minimum",
           "period": "60",
-          "matchExact": true,
-          "hide": false,
-          "accountId": "$account"
+          "matchExact": false,
+          "hide": false
         }
       ],
       "fieldConfig": {
@@ -522,11 +461,11 @@
             "steps": [
               {
                 "value": null,
-                "color": "#d9262c"
+                "color": "red"
               },
               {
                 "value": 1,
-                "color": "#2eb67d"
+                "color": "green"
               }
             ]
           }
@@ -556,7 +495,7 @@
       "description": "Synthetic workflow canary, every 5 minutes. P2 alarm after 2 runs below 100%.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "${datasource}"
+        "uid": "8s123msinglish"
       },
       "targets": [
         {
@@ -569,13 +508,14 @@
           "namespace": "CloudWatchSynthetics",
           "metricName": "SuccessPercent",
           "dimensions": {
-            "CanaryName": "$workflow_canary"
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
           },
           "statistic": "Average",
           "period": "300",
-          "matchExact": true,
-          "hide": false,
-          "accountId": "$account"
+          "matchExact": false,
+          "hide": false
         }
       ],
       "fieldConfig": {
@@ -593,11 +533,11 @@
             "steps": [
               {
                 "value": null,
-                "color": "#e8801a"
+                "color": "orange"
               },
               {
                 "value": 100,
-                "color": "#2eb67d"
+                "color": "green"
               }
             ]
           }

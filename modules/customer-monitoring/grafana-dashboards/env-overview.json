@@ -2,10 +2,6 @@
   "title": "Lighthouse - Environment Overview",
   "uid": "lighthouse-env-overview",
   "description": "Status of one customer environment: uptime over 24 hours, 7 days and 30 days, and the HTTPS and workflow canary results.",
-  "tags": [
-    "lighthouse",
-    "monitoring"
-  ],
   "schemaVersion": 39,
   "editable": true,
   "graphTooltip": 1,
@@ -18,105 +14,80 @@
   "templating": {
     "list": [
       {
-        "name": "datasource",
-        "type": "datasource",
-        "query": "cloudwatch",
-        "label": "Data source"
-      },
-      {
-        "name": "environment",
-        "label": "Environment",
-        "type": "custom",
-        "query": "dev,stg,prd",
-        "current": {
-          "text": "prd",
-          "value": "prd",
-          "selected": true
-        },
-        "options": [
-          {
-            "text": "dev",
-            "value": "dev",
-            "selected": false
-          },
-          {
-            "text": "stg",
-            "value": "stg",
-            "selected": false
-          },
-          {
-            "text": "prd",
-            "value": "prd",
-            "selected": true
-          }
-        ]
-      },
-      {
         "name": "region",
-        "type": "query",
         "label": "Region",
+        "type": "query",
         "refresh": 1,
         "datasource": {
           "type": "cloudwatch",
-          "uid": "${datasource}"
+          "uid": "8s123msinglish"
+        },
+        "current": {
+          "text": "ap-southeast-2",
+          "value": "ap-southeast-2",
+          "selected": true
         },
         "query": {
-          "queryType": "regions",
+          "queryType": "ec2InstanceAttributes",
+          "region": "default",
+          "attributeName": "Tags.region",
+          "ec2Filters": {},
           "refId": "region"
         }
       },
       {
-        "name": "account",
-        "label": "Customer account",
+        "name": "environment",
+        "label": "Environment",
         "type": "query",
         "refresh": 1,
         "datasource": {
           "type": "cloudwatch",
-          "uid": "${datasource}"
+          "uid": "8s123msinglish"
+        },
+        "current": {
+          "text": "production",
+          "value": "production",
+          "selected": true
         },
         "query": {
-          "queryType": "accounts",
+          "queryType": "ec2InstanceAttributes",
           "region": "$region",
-          "refId": "account"
-        },
-        "regex": "/^$environment-/"
-      },
-      {
-        "name": "https_canary",
-        "label": "HTTPS canary",
-        "type": "query",
-        "refresh": 1,
-        "datasource": {
-          "type": "cloudwatch",
-          "uid": "${datasource}"
-        },
-        "query": {
-          "queryType": "dimensionValues",
-          "region": "$region",
-          "namespace": "CloudWatchSynthetics",
-          "metricName": "SuccessPercent",
-          "dimensionKey": "CanaryName",
-          "refId": "https_canary",
-          "accountId": "$account"
+          "attributeName": "Tags.Environment",
+          "ec2Filters": {},
+          "refId": "environment"
         }
       },
       {
-        "name": "workflow_canary",
-        "label": "Workflow canary",
+        "name": "instance",
+        "label": "Instance",
         "type": "query",
         "refresh": 1,
         "datasource": {
           "type": "cloudwatch",
-          "uid": "${datasource}"
+          "uid": "8s123msinglish"
         },
         "query": {
-          "queryType": "dimensionValues",
+          "queryType": "ec2InstanceAttributes",
           "region": "$region",
-          "namespace": "CloudWatchSynthetics",
-          "metricName": "SuccessPercent",
-          "dimensionKey": "CanaryName",
-          "refId": "workflow_canary",
-          "accountId": "$account"
+          "attributeName": "Tags.Instance",
+          "ec2Filters": {
+            "tag:Environment": [
+              "$environment"
+            ]
+          },
+          "refId": "instance"
+        },
+        "includeAll": true,
+        "allValue": "*",
+        "multi": true,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
         }
       }
     ]
@@ -135,7 +106,7 @@
       "description": "Average of the HTTPS canary SuccessPercent over 24 h.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "${datasource}"
+        "uid": "8s123msinglish"
       },
       "targets": [
         {
@@ -148,13 +119,14 @@
           "namespace": "CloudWatchSynthetics",
           "metricName": "SuccessPercent",
           "dimensions": {
-            "CanaryName": "$https_canary"
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
           },
           "statistic": "Average",
           "period": "3600",
-          "matchExact": true,
-          "hide": false,
-          "accountId": "$account"
+          "matchExact": false,
+          "hide": false
         }
       ],
       "timeFrom": "24h",
@@ -169,15 +141,15 @@
             "steps": [
               {
                 "value": null,
-                "color": "#d9262c"
+                "color": "red"
               },
               {
                 "value": 99,
-                "color": "#e8801a"
+                "color": "orange"
               },
               {
                 "value": 99.9,
-                "color": "#2eb67d"
+                "color": "green"
               }
             ]
           }
@@ -208,7 +180,7 @@
       "description": "Average of the HTTPS canary SuccessPercent over 7 d.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "${datasource}"
+        "uid": "8s123msinglish"
       },
       "targets": [
         {
@@ -221,13 +193,14 @@
           "namespace": "CloudWatchSynthetics",
           "metricName": "SuccessPercent",
           "dimensions": {
-            "CanaryName": "$https_canary"
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
           },
           "statistic": "Average",
           "period": "3600",
-          "matchExact": true,
-          "hide": false,
-          "accountId": "$account"
+          "matchExact": false,
+          "hide": false
         }
       ],
       "timeFrom": "7d",
@@ -242,15 +215,15 @@
             "steps": [
               {
                 "value": null,
-                "color": "#d9262c"
+                "color": "red"
               },
               {
                 "value": 99,
-                "color": "#e8801a"
+                "color": "orange"
               },
               {
                 "value": 99.9,
-                "color": "#2eb67d"
+                "color": "green"
               }
             ]
           }
@@ -281,7 +254,7 @@
       "description": "Average of the HTTPS canary SuccessPercent over 30 d.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "${datasource}"
+        "uid": "8s123msinglish"
       },
       "targets": [
         {
@@ -294,13 +267,14 @@
           "namespace": "CloudWatchSynthetics",
           "metricName": "SuccessPercent",
           "dimensions": {
-            "CanaryName": "$https_canary"
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
           },
           "statistic": "Average",
           "period": "3600",
-          "matchExact": true,
-          "hide": false,
-          "accountId": "$account"
+          "matchExact": false,
+          "hide": false
         }
       ],
       "timeFrom": "30d",
@@ -315,15 +289,15 @@
             "steps": [
               {
                 "value": null,
-                "color": "#d9262c"
+                "color": "red"
               },
               {
                 "value": 99,
-                "color": "#e8801a"
+                "color": "orange"
               },
               {
                 "value": 99.9,
-                "color": "#2eb67d"
+                "color": "green"
               }
             ]
           }
@@ -354,7 +328,7 @@
       "description": "Customer domain over HTTPS (port 443, expects HTTP 200), every minute. P1 alarm after 3 minutes below 100%. For the failure reason open the run in CloudWatch Synthetics.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "${datasource}"
+        "uid": "8s123msinglish"
       },
       "targets": [
         {
@@ -367,13 +341,14 @@
           "namespace": "CloudWatchSynthetics",
           "metricName": "SuccessPercent",
           "dimensions": {
-            "CanaryName": "$https_canary"
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
           },
           "statistic": "Average",
           "period": "60",
-          "matchExact": true,
-          "hide": false,
-          "accountId": "$account"
+          "matchExact": false,
+          "hide": false
         }
       ],
       "fieldConfig": {
@@ -391,11 +366,11 @@
             "steps": [
               {
                 "value": null,
-                "color": "#d9262c"
+                "color": "red"
               },
               {
                 "value": 100,
-                "color": "#2eb67d"
+                "color": "green"
               }
             ]
           }
@@ -425,7 +400,7 @@
       "description": "Lighthouse workflow canary, every 5 minutes. P2 alarm after 2 runs (10 minutes) below 100%.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "${datasource}"
+        "uid": "8s123msinglish"
       },
       "targets": [
         {
@@ -438,13 +413,14 @@
           "namespace": "CloudWatchSynthetics",
           "metricName": "SuccessPercent",
           "dimensions": {
-            "CanaryName": "$workflow_canary"
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
           },
           "statistic": "Average",
           "period": "300",
-          "matchExact": true,
-          "hide": false,
-          "accountId": "$account"
+          "matchExact": false,
+          "hide": false
         }
       ],
       "fieldConfig": {
@@ -462,11 +438,11 @@
             "steps": [
               {
                 "value": null,
-                "color": "#e8801a"
+                "color": "orange"
               },
               {
                 "value": 100,
-                "color": "#2eb67d"
+                "color": "green"
               }
             ]
           }
