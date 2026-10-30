@@ -1,0 +1,47 @@
+name: "Ansible Lint"
+description: "Run ansible-lint and publish findings to the job summary"
+
+inputs:
+  working-directory:
+    description: "Directory containing Ansible playbooks"
+    required: false
+    default: "ansible/"
+
+runs:
+  using: "composite"
+  steps:
+    # ubuntu-latest already ships Python 3 + pip, so no actions/setup-python needed.
+    # Versions pinned (rather than resolved fresh each run) for reproducible,
+    # supply-chain-safe installs — matches the pin-everything approach used
+    # elsewhere in this repo's CI (tflint_version, action SHAs, scannerVersion).
+    - name: Install ansible-lint
+      shell: bash
+      run: |
+        python3 -m pip install --only-binary :all: ansible==14.3.0 ansible-lint==26.8.0
+
+    - name: Run ansible-lint
+      id: ansible_lint
+      shell: bash
+      continue-on-error: true
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        ansible-lint --nocolor 2>&1 | tee ansible-lint-output.txt
+        exit ${PIPESTATUS[0]}
+
+    - name: Publish ansible-lint results to job summary
+      if: always()
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        {
+          echo "## Ansible Lint Results"
+          echo
+          echo '```'
+          cat ansible-lint-output.txt
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Fail if ansible-lint found issues
+      if: steps.ansible_lint.outcome == 'failure'
+      shell: bash
+      run: exit 1

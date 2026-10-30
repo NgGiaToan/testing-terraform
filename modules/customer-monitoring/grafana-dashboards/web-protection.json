@@ -1,0 +1,381 @@
+{
+  "title": "Lighthouse - Web Protection",
+  "uid": "lighthouse-web-protection",
+  "description": "WAF, Network Firewall and certificates: allowed and blocked requests, passed and dropped packets, and days to certificate expiry.",
+  "schemaVersion": 39,
+  "editable": true,
+  "graphTooltip": 1,
+  "timezone": "browser",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "templating": {
+    "list": [
+      {
+        "name": "region",
+        "label": "Region",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "8s123msinglish"
+        },
+        "current": {
+          "text": "ap-southeast-2",
+          "value": "ap-southeast-2",
+          "selected": true
+        },
+        "query": {
+          "queryType": "ec2InstanceAttributes",
+          "region": "default",
+          "attributeName": "Tags.region",
+          "ec2Filters": {},
+          "refId": "region"
+        }
+      },
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "8s123msinglish"
+        },
+        "current": {
+          "text": "production",
+          "value": "production",
+          "selected": true
+        },
+        "query": {
+          "queryType": "ec2InstanceAttributes",
+          "region": "$region",
+          "attributeName": "Tags.Environment",
+          "ec2Filters": {},
+          "refId": "environment"
+        }
+      },
+      {
+        "name": "instance",
+        "label": "Instance",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "8s123msinglish"
+        },
+        "query": {
+          "queryType": "ec2InstanceAttributes",
+          "region": "$region",
+          "attributeName": "Tags.Instance",
+          "ec2Filters": {
+            "tag:Environment": [
+              "$environment"
+            ]
+          },
+          "refId": "instance"
+        },
+        "includeAll": true,
+        "allValue": "*",
+        "multi": true,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "type": "timeseries",
+      "title": "WAF allowed vs blocked",
+      "description": "Requests per 5 minutes. Blocked above its expected range for 10 minutes raises a P3 alarm.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "8s123msinglish"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/WAFV2",
+          "metricName": "AllowedRequests",
+          "dimensions": {
+            "Region": "$region",
+            "Rule": "ALL",
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": false,
+          "label": "Allowed",
+          "hide": false
+        },
+        {
+          "refId": "B",
+          "id": "b",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/WAFV2",
+          "metricName": "BlockedRequests",
+          "dimensions": {
+            "Region": "$region",
+            "Rule": "ALL",
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": false,
+          "label": "Blocked",
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "type": "timeseries",
+      "title": "Blocked requests by rule group",
+      "description": "One series per rule. Investigation only, no alarm.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "8s123msinglish"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/WAFV2",
+          "metricName": "BlockedRequests",
+          "dimensions": {
+            "Region": "$region",
+            "Rule": "*",
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": false,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "type": "timeseries",
+      "title": "Network Firewall passed vs dropped",
+      "description": "Shared firewall in the management account, one series per availability zone and engine. Dropped above its expected range for 10 minutes raises a P3 alarm.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "8s123msinglish"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/NetworkFirewall",
+          "metricName": "PassedPackets",
+          "dimensions": {
+            "AvailabilityZone": "*",
+            "Engine": "*",
+            "FirewallName": "*"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": false,
+          "hide": false
+        },
+        {
+          "refId": "B",
+          "id": "b",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/NetworkFirewall",
+          "metricName": "DroppedPackets",
+          "dimensions": {
+            "AvailabilityZone": "*",
+            "Engine": "*",
+            "FirewallName": "*"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": false,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "type": "timeseries",
+      "title": "Certificate days to expiry",
+      "description": "ACM renews DNS-validated certificates 45 days out. Below 30 days P2, below 7 days P1.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "8s123msinglish"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/CertificateManager",
+          "metricName": "DaysToExpiry",
+          "dimensions": {
+            "CertificateArn": "*",
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
+          },
+          "statistic": "Minimum",
+          "period": "86400",
+          "matchExact": false,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "d",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "red"
+              },
+              {
+                "value": 7,
+                "color": "orange"
+              },
+              {
+                "value": 30,
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+# Copy to terraform.tfvars and fill in. No secret goes in this file. The token is OPTIONAL: leave it out when
+# Grafana lets everyone in as Admin (the provider then uses "anonymous"); otherwise pass it as an environment
+# variable (TF_VAR_grafana_token).
+
+grafana_url = "https://grafana.mycompany.com"
+
+# How Grafana signs in to AWS. The default, "default" (AWS SDK Default), is for a Grafana you run yourself
+# whose server has an AWS identity (the role of its machine or task). For Grafana Cloud use "grafana_assume_role"
+# instead.
+# authentication_provider = "default"
+
+# One CloudWatch data source per customer. The key is the name shown in the dashboards' Customer
+# dropdown; `environment` is the environment value of the customer's stack (the read-only role there is
+# named <environment>-monitoring-grafana-read); `region` is the default region of the data source.
+customers = {
+  # cus0001 = { account_id = "222222222222", environment = "dev-cus0001", region = "us-east-1" }
+}
+
+# Optional: the management account's data source (Network Firewall, quota, Lambda, SNS panels). The
+# grafana_role_arn output of environment/shr-monitoring. Leave it out to skip that data source.
+# management_grafana_role_arn = "arn:aws:iam::111111111111:role/lighthouse-alerting-ap-southeast-2-grafana-read"
+# region                      = "ap-southeast-2"

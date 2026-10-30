@@ -1,0 +1,20 @@
+# Example of the cost customers for ONE deployment per environment (here prd). Copy to a .tfvars file and pass it:
+#   terraform apply -var environment=prd -var region=us-east-1 -var-file=cost.prd.tfvars
+#
+# instance = the value of the Instance tag on that customer's resources. It is the tag that is unique per customer
+# (CostCenter is not), and it must be ACTIVE in Billing > Cost Allocation Tags before the budget can see any
+# spend. Try one customer with a low budget first.
+
+cost_customers = {
+  cus0001 = {
+    instance           = "cus0001"
+    monthly_budget_usd = 1 # low on purpose for the first test, then the real figure
+  }
+  # acme = {
+  #   instance               = "acme"
+  #   monthly_budget_usd    = 500
+  #   anomaly_threshold_usd = 50
+  # }
+}
+
+# cost_default_anomaly_threshold_usd = 100

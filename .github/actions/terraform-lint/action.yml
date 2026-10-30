@@ -1,0 +1,98 @@
+name: "Terraform Lint"
+description: "Run terraform fmt/validate across every environment plus TFLint, and publish findings to the job summary"
+
+inputs:
+  tflint_version:
+    description: "TFLint version to install"
+    required: false
+    default: "v0.64.0"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    - name: Terraform Format Check
+      id: fmt
+      shell: bash
+      continue-on-error: true
+      run: |
+        terraform fmt -check -recursive -diff 2>&1 | tee fmt-output.txt
+        exit ${PIPESTATUS[0]}
+
+    - name: Publish Terraform Format results to job summary
+      if: always()
+      shell: bash
+      run: |
+        {
+          echo "## Terraform Format Check"
+          echo
+          echo '```diff'
+          if [ -s fmt-output.txt ]; then
+            cat fmt-output.txt
+          else
+            echo "All files formatted correctly."
+          fi
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Terraform Validate (every environment)
+      id: validate
+      shell: bash
+      continue-on-error: true
+      run: |
+        fail=0
+        for dir in environment/*/; do
+          env_name=$(basename "$dir")
+          {
+            echo "## Terraform Validate — $env_name"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if (cd "$dir" && terraform init -backend=false && terraform validate -no-color) >> "$GITHUB_STEP_SUMMARY" 2>&1; then
+            :
+          else
+            fail=1
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+        done
+        exit $fail
+
+    - name: Setup TFLint
+      uses: terraform-linters/setup-tflint@90f302c255ef959cbfb4bd10581afecdb7ece3e6 # v4.1.1
+      with:
+        tflint_version: ${{ inputs.tflint_version }}
+
+    - name: Init TFLint
+      shell: bash
+      run: tflint --init
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+
+    # SARIF + code scanning upload needs GitHub Advanced Security, which isn't available
+    # on private repos without a GHAS license — so findings go to the job summary instead,
+    # which needs no special license or permissions.
+    - name: Run TFLint
+      id: tflint
+      shell: bash
+      continue-on-error: true
+      run: |
+        tflint --recursive --format compact 2>&1 | tee tflint-output.txt
+        exit ${PIPESTATUS[0]}
+
+    - name: Publish TFLint results to job summary
+      if: always()
+      shell: bash
+      run: |
+        {
+          echo "## TFLint Results"
+          echo
+          echo '```'
+          cat tflint-output.txt
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Fail if fmt, validate, or TFLint found issues
+      if: steps.fmt.outcome == 'failure' || steps.validate.outcome == 'failure' || steps.tflint.outcome == 'failure'
+      shell: bash
+      run: exit 1

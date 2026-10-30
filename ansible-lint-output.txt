@@ -1,0 +1,1 @@
+/tmp/test.sh: line 1: ansible-lint: command not found

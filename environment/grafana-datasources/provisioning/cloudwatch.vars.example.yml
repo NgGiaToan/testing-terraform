@@ -1,0 +1,27 @@
+# Example variables for cloudwatch.yaml.j2. Copy it (for example to group_vars/grafana.yml) and fill it in.
+# Nothing secret here: for authType "keys" take grafana_cw_access_key / grafana_cw_secret_key from Ansible Vault.
+
+# Chosen route: AWS SDK Default. The Grafana service gets AWS_ROLE_ARN, AWS_WEB_IDENTITY_TOKEN_FILE and AWS_REGION
+# (Managed Identity federation, see README.md), so the data source assumes no role itself.
+grafana_cw_auth_type: default
+grafana_cw_default_region: ap-southeast-2
+
+# The one data source: it reads the one account that holds the monitoring and every customer.
+grafana_cw_management:
+  enabled: true
+  name: CloudWatch - management account
+  uid: lighthouse-cw-management
+  default_region: ap-southeast-2
+  # assume_role_arn: arn:aws:iam::111111111111:role/lighthouse-alerting-ap-southeast-2-grafana-read   # only without federation
+
+grafana_cw_default_datasource: lighthouse-cw-management
+
+# Alternative route, leave empty with one account: one data source per customer account.
+grafana_cw_customers: []
+#  - name: acme
+#    account_id: "222222222222"
+#    environment: prod-acme        # role = <environment>-monitoring-grafana-read
+#    region: ap-southeast-2
+
+# Remove data sources that no longer exist in this file (by name, as Grafana deletes by name).
+grafana_cw_delete: []

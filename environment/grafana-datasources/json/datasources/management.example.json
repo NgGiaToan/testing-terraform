@@ -1,0 +1,12 @@
+{
+  "name": "CloudWatch - management account",
+  "uid": "lighthouse-cw-management",
+  "type": "cloudwatch",
+  "access": "proxy",
+  "isDefault": false,
+  "jsonData": {
+    "authType": "default",
+    "assumeRoleArn": "arn:aws:iam::111111111111:role/lighthouse-alerting-ap-southeast-2-grafana-read",
+    "defaultRegion": "ap-southeast-2"
+  }
+}

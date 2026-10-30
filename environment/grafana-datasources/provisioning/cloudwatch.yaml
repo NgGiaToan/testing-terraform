@@ -1,0 +1,50 @@
+# Grafana provisioning file for the CloudWatch data sources: the same data sources as the Terraform in
+# this folder, for a Grafana that you run yourself and that reads its provisioning files from disk
+# (Grafana Cloud does not read provisioning files; use the Terraform for that). Use ONE of the two for
+# a given uid, never both.
+#
+# Put the file where Grafana reads data source provisioning, usually
+#   /etc/grafana/provisioning/datasources/cloudwatch.yaml
+# (with Docker: mount it there), then restart Grafana, or reload without a restart:
+#   POST /api/admin/provisioning/datasources/reload     (admin)
+#
+# Nothing secret is written here.
+#
+# How Grafana signs in to AWS (authType). Chosen: default (AWS SDK Default).
+#   default      the AWS identity of the Grafana server (instance or task role, environment variables)
+#   credentials  a profile of the credentials file on the Grafana server: add  profile: <name>
+#   keys         an access key: needs secureJsonData (accessKey, secretKey); not used here
+# Whatever it is, that identity must be allowed to sts:AssumeRole on the roles below, and each role
+# trusts the AWS account of that identity (modules/customer-monitoring/grafana.tf).
+#
+# Not verified against a Grafana: the field names follow the Grafana documentation of the CloudWatch
+# data source. Check with "Save & test" on each data source after the first start.
+
+apiVersion: 1
+
+# As it is, the file provisions nothing. To provision data sources: replace the line below with
+# "datasources:" (no brackets), then uncomment the entries you need, one per customer, and fill them in.
+datasources: []
+  # ONE ENTRY PER CUSTOMER.
+  # - name: acme                          # shown in the Customer dropdown of the dashboards
+  #   uid: lighthouse-cw-acme             # lighthouse-cw-<name>, as the Terraform stack names it
+  #   type: cloudwatch
+  #   access: proxy
+  #   editable: false
+  #   jsonData:
+  #     authType: default
+  #     # grafana_role_arn output of the customer's stack: <environment>-monitoring-grafana-read
+  #     assumeRoleArn: arn:aws:iam::222222222222:role/prod-acme-monitoring-grafana-read
+  #     defaultRegion: ap-southeast-2     # the region of the customer's resources
+
+  # OPTIONAL: the management account (Network Firewall, quota, Lambda, SNS panels). The role is
+  # lighthouse-alerting-<region>-grafana-read, created by modules/alert-delivery.
+  # - name: CloudWatch - management account
+  #   uid: lighthouse-cw-management
+  #   type: cloudwatch
+  #   access: proxy
+  #   editable: false
+  #   jsonData:
+  #     authType: default
+  #     assumeRoleArn: arn:aws:iam::111111111111:role/lighthouse-alerting-ap-southeast-2-grafana-read
+  #     defaultRegion: ap-southeast-2

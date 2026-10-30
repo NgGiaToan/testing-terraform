@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars and fill in. Nothing here is secret (identifiers, no token or key), so terraform.tfvars
+# can be committed to a private repository. This stack has ONE deployment, so terraform.tfvars is loaded
+# automatically (no -var-file needed).
+
+# Microsoft Entra ID, Overview, "Tenant ID"  (or: az account show --query tenantId -o tsv)
+grafana_azure_tenant_id = "00000000-0000-0000-0000-000000000000"
+
+# Application ID URI of the Entra app registration made for AWS (Expose an API). It must match the aud claim of
+# the token that the VM requests, character by character.
+grafana_azure_audience = "api://aws-sts"
+
+# Object (principal) ID of the Managed Identity attached to the Grafana VM
+# (az vm show ... --query identity, or the Managed Identity, Overview).
+grafana_azure_subject = "00000000-0000-0000-0000-000000000000"

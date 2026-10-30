@@ -1,0 +1,54 @@
+# Managed by Ansible (role config, template datasources.yaml.j2): changes made in the Grafana UI are not kept.
+apiVersion: 1
+
+# This prune: true is what makes removing datasources from
+# the list below actually cause them to be deleted.
+prune: true
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: {{ prometheus_url }}
+    # Every datasource must specify an explicit UID!
+    # You can generate one for new datasources with:
+    # `tr -dc A-Z0-9 </dev/urandom | head -c 17; echo`
+    uid: "{{ prometheus_uid }}"
+    jsonData:
+      httpMethod: POST
+      manageAlerts: true
+      prometheusType: Prometheus
+      prometheusVersion: {{ prometheus_version }}
+      cacheLevel: 'High'
+      disableRecordingRules: false
+      incrementalQueryOverlapWindow: 10m
+
+  - name: Azure Monitor
+    type: grafana-azure-monitor-datasource
+    access: proxy
+    uid: "{{ azure_monitor_uid }}"
+    jsonData:
+      # Authenticate via Managed Identity. The Managed Identity Client ID
+      # that this will use is assigned in /etc/grafana.ini.
+      azureAuthType: msi
+      subscriptionId: {{ azure_subscription_id }}
+    version: 1
+
+{% if cloudwatch_enabled | bool %}
+  # AWS CloudWatch of the one account that holds the monitoring and every customer: the dashboards pick
+  # the customer by tag.
+  - name: CloudWatch
+    type: cloudwatch
+    access: proxy
+    uid: "{{ cloudwatch_uid }}"
+    jsonData:
+      # AWS SDK Default: Grafana uses the AWS identity of its own server. On this Azure VM that is the
+      # web identity federation of the Managed Identity: the Grafana service has AWS_ROLE_ARN,
+      # AWS_WEB_IDENTITY_TOKEN_FILE and AWS_REGION in its environment (see README.md), so no key is stored here.
+      authType: default
+{% if cloudwatch_assume_role_arn | length > 0 %}
+      assumeRoleArn: {{ cloudwatch_assume_role_arn }}
+{% endif %}
+      defaultRegion: {{ cloudwatch_default_region }}
+    version: 1
+{% endif %}

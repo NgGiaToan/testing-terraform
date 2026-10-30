@@ -1,0 +1,10 @@
+# Managed by Ansible (role config, template grafana-aws-token.timer.j2)
+[Unit]
+Description=Refresh the Azure Managed Identity token for the AWS web identity federation of Grafana
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec={{ aws_token_refresh }}
+
+[Install]
+WantedBy=timers.target

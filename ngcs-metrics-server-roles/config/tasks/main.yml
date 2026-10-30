@@ -1,0 +1,37 @@
+---
+- name: Check the values passed in from outside
+  ansible.builtin.assert:
+    that:
+      - prometheus_url is defined and prometheus_url | length > 0
+      - prometheus_version is defined and prometheus_version | length > 0
+      - prometheus_uid is defined and prometheus_uid | length > 0
+      - azure_subscription_id is defined and azure_subscription_id | length > 0
+      - azure_monitor_uid is defined and azure_monitor_uid | length > 0
+      - not (cloudwatch_enabled | bool) or (cloudwatch_default_region is defined and cloudwatch_default_region | length > 0)
+      - not (aws_federation_enabled | bool) or (aws_role_arn is defined and aws_role_arn | length > 0)
+      - not (aws_federation_enabled | bool) or (azure_mi_client_id is defined and azure_mi_client_id | length > 0)
+      - not (aws_federation_enabled | bool) or (azure_audience is defined and azure_audience | length > 0)
+      - grafana_admin_password is defined and grafana_admin_password | length > 0
+    fail_msg: >-
+      A required value is missing. Pass prometheus_url, prometheus_version, prometheus_uid,
+      azure_subscription_id, azure_monitor_uid, cloudwatch_default_region (when cloudwatch_enabled),
+      aws_role_arn, azure_mi_client_id and azure_audience (when aws_federation_enabled) and
+      grafana_admin_password. See README.md.
+    quiet: true
+
+# First, because it checks the token before it changes anything of Grafana: when a check fails the play stops here and
+# the data source file below is not written.
+- name: AWS identity of the Grafana service (web identity federation)
+  ansible.builtin.include_tasks: aws_federation.yml
+  when: aws_federation_enabled | bool
+
+# This file replaces datasources.yaml and has prune: true: a data source of that provisioning that is not in the file
+# is deleted at the next reload or restart. Read the README (Before the first run on a Grafana that is in use).
+- name: Render Grafana datasources
+  ansible.builtin.template:
+    src: datasources.yaml.j2
+    dest: "{{ grafana_provisioning_dir }}/datasources/datasources.yaml"
+    owner: root
+    group: "{{ grafana_group }}"
+    mode: "0640"
+  notify: Reload grafana datasources

@@ -1,0 +1,463 @@
+{
+  "title": "Lighthouse - Environment Overview",
+  "uid": "lighthouse-env-overview",
+  "description": "Status of one customer environment: uptime over 24 hours, 7 days and 30 days, and the HTTPS and workflow canary results.",
+  "schemaVersion": 39,
+  "editable": true,
+  "graphTooltip": 1,
+  "timezone": "browser",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "templating": {
+    "list": [
+      {
+        "name": "region",
+        "label": "Region",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "8s123msinglish"
+        },
+        "current": {
+          "text": "ap-southeast-2",
+          "value": "ap-southeast-2",
+          "selected": true
+        },
+        "query": {
+          "queryType": "ec2InstanceAttributes",
+          "region": "default",
+          "attributeName": "Tags.region",
+          "ec2Filters": {},
+          "refId": "region"
+        }
+      },
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "8s123msinglish"
+        },
+        "current": {
+          "text": "production",
+          "value": "production",
+          "selected": true
+        },
+        "query": {
+          "queryType": "ec2InstanceAttributes",
+          "region": "$region",
+          "attributeName": "Tags.Environment",
+          "ec2Filters": {},
+          "refId": "environment"
+        }
+      },
+      {
+        "name": "instance",
+        "label": "Instance",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "8s123msinglish"
+        },
+        "query": {
+          "queryType": "ec2InstanceAttributes",
+          "region": "$region",
+          "attributeName": "Tags.Instance",
+          "ec2Filters": {
+            "tag:Environment": [
+              "$environment"
+            ]
+          },
+          "refId": "instance"
+        },
+        "includeAll": true,
+        "allValue": "*",
+        "multi": true,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "type": "stat",
+      "title": "Uptime 24 h",
+      "description": "Average of the HTTPS canary SuccessPercent over 24 h.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "8s123msinglish"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "CloudWatchSynthetics",
+          "metricName": "SuccessPercent",
+          "dimensions": {
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
+          },
+          "statistic": "Average",
+          "period": "3600",
+          "matchExact": false,
+          "hide": false
+        }
+      ],
+      "timeFrom": "24h",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "red"
+              },
+              {
+                "value": 99,
+                "color": "orange"
+              },
+              {
+                "value": 99.9,
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "mean"
+          ],
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 2,
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
+      "type": "stat",
+      "title": "Uptime 7 d",
+      "description": "Average of the HTTPS canary SuccessPercent over 7 d.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "8s123msinglish"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "CloudWatchSynthetics",
+          "metricName": "SuccessPercent",
+          "dimensions": {
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
+          },
+          "statistic": "Average",
+          "period": "3600",
+          "matchExact": false,
+          "hide": false
+        }
+      ],
+      "timeFrom": "7d",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "red"
+              },
+              {
+                "value": 99,
+                "color": "orange"
+              },
+              {
+                "value": 99.9,
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "mean"
+          ],
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 3,
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "type": "stat",
+      "title": "Uptime 30 d",
+      "description": "Average of the HTTPS canary SuccessPercent over 30 d.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "8s123msinglish"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "CloudWatchSynthetics",
+          "metricName": "SuccessPercent",
+          "dimensions": {
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
+          },
+          "statistic": "Average",
+          "period": "3600",
+          "matchExact": false,
+          "hide": false
+        }
+      ],
+      "timeFrom": "30d",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "red"
+              },
+              {
+                "value": 99,
+                "color": "orange"
+              },
+              {
+                "value": 99.9,
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "mean"
+          ],
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 4,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "type": "timeseries",
+      "title": "HTTPS canary",
+      "description": "Customer domain over HTTPS (port 443, expects HTTP 200), every minute. P1 alarm after 3 minutes below 100%. For the failure reason open the run in CloudWatch Synthetics.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "8s123msinglish"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "CloudWatchSynthetics",
+          "metricName": "SuccessPercent",
+          "dimensions": {
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
+          },
+          "statistic": "Average",
+          "period": "60",
+          "matchExact": false,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "red"
+              },
+              {
+                "value": 100,
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "type": "timeseries",
+      "title": "Workflow canary",
+      "description": "Lighthouse workflow canary, every 5 minutes. P2 alarm after 2 runs (10 minutes) below 100%.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "8s123msinglish"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "CloudWatchSynthetics",
+          "metricName": "SuccessPercent",
+          "dimensions": {
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
+          },
+          "statistic": "Average",
+          "period": "300",
+          "matchExact": false,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "orange"
+              },
+              {
+                "value": 100,
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    }
+  ]
+}

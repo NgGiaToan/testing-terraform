@@ -1,0 +1,173 @@
+---
+# Gives the Grafana service an AWS identity (Azure Managed Identity -> AWS web identity federation), so that the
+# CloudWatch data source with authType: default works. The AWS side is environment/shr-grafana-federation.
+#
+# Order matters: everything that can be checked is checked BEFORE the drop-in is written and Grafana is restarted,
+# so a wrong value (audience, identity, role) stops the play with a clear message and leaves a running Grafana alone.
+#   1. the token script, service and timer are installed and run once
+#   2. the token file is there and Grafana's group can read it
+#   3. the claims of the token (iss, aud, sub) are what the AWS trust expects
+#   4. AWS STS accepts the token (the same call that Grafana's AWS SDK will make)
+#   5. only then: the drop-in with the three AWS variables; the handlers restart Grafana at the end of the play
+
+- name: Install curl and jq (token script)
+  ansible.builtin.package:
+    name:
+      - curl
+      - jq
+    state: present
+
+- name: Install the token script
+  ansible.builtin.copy:
+    src: grafana-aws-token.sh
+    dest: /usr/local/bin/grafana-aws-token.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the token service and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - grafana-aws-token.service
+    - grafana-aws-token.timer
+
+- name: Make systemd know the token units
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Get a token now, before Grafana is touched
+  block:
+    - name: Run the token service once
+      ansible.builtin.systemd:
+        name: grafana-aws-token.service
+        state: started
+  rescue:
+    - name: Read the log of the token service
+      ansible.builtin.command: journalctl -u grafana-aws-token.service -n 20 --no-pager
+      register: aws_token_log
+      changed_when: false
+      failed_when: false
+
+    - name: Stop, the token could not be fetched
+      ansible.builtin.fail:
+        msg: >-
+          The token service failed. Grafana was not changed. Usual causes: the Managed Identity is not attached to this
+          VM or azure_mi_client_id is wrong (not the object ID), or azure_audience is not an app registration of the
+          tenant (AADSTS500011). Log of the service:
+          {{ aws_token_log.stdout | default('(not readable)') }}
+
+- name: Check that the token file exists and Grafana can read it
+  ansible.builtin.stat:
+    path: "{{ aws_token_file }}"
+  register: aws_token_stat
+
+- name: Stop if there is no token
+  ansible.builtin.assert:
+    that:
+      - aws_token_stat.stat.exists
+      - aws_token_stat.stat.gr_name == grafana_group
+      - aws_token_stat.stat.size > 0
+    fail_msg: >-
+      {{ aws_token_file }} is missing, empty or not owned by group {{ grafana_group }}. Look at
+      `journalctl -u grafana-aws-token.service` (Azure metadata service, azure_mi_client_id and azure_audience).
+    quiet: true
+
+# The claims of a token are not secret (the signature is what protects it), and are the first thing to compare
+# with the trust of the AWS role. The signature is not checked here: AWS does that in the next step.
+- name: Read the token
+  ansible.builtin.slurp:
+    src: "{{ aws_token_file }}"
+  register: aws_token_raw
+  no_log: true
+
+- name: Take the payload of the token and add the base64 padding
+  ansible.builtin.set_fact:
+    aws_token_payload: >-
+      {{ (aws_token_raw.content | b64decode | trim).split('.')[1] | replace('-', '+') | replace('_', '/') }}
+  no_log: true
+
+- name: Pad the payload
+  ansible.builtin.set_fact:
+    aws_token_payload: "{{ aws_token_payload ~ ('=' * ((4 - (aws_token_payload | length) % 4) % 4)) }}"
+  no_log: true
+
+- name: Stop if the claims of the token do not match the AWS trust
+  ansible.builtin.assert:
+    that:
+      - (aws_token_payload | b64decode | from_json).aud == azure_audience
+      - (aws_token_payload | b64decode | from_json).iss is match('^https://sts[.]windows[.]net/[0-9a-fA-F-]{36}/$')
+      - azure_mi_object_id | length == 0 or (aws_token_payload | b64decode | from_json).sub == azure_mi_object_id
+    fail_msg: >-
+      The token is not what the AWS trust expects. aud = {{ (aws_token_payload | b64decode | from_json).aud | default('?') }}
+      (azure_audience = {{ azure_audience }}), iss = {{ (aws_token_payload | b64decode | from_json).iss | default('?') }}
+      (expected https://sts.windows.net/<tenant>/), sub = {{ (aws_token_payload | b64decode | from_json).sub | default('?') }}
+      (azure_mi_object_id = {{ azure_mi_object_id | default('') | default('not set', true) }}).
+      grafana_azure_audience and grafana_azure_subject of environment/shr-grafana-federation must be these values.
+    quiet: true
+
+# The call that Grafana's AWS SDK will make with AWS_ROLE_ARN and AWS_WEB_IDENTITY_TOKEN_FILE. It needs no AWS
+# credentials (the token is the proof). The answer holds temporary credentials, so nothing of it is printed.
+- name: Exchange the token with AWS STS
+  ansible.builtin.uri:
+    url: "https://sts.{{ aws_region }}.amazonaws.com/"
+    method: POST
+    headers:
+      Accept: application/json
+    body_format: form-urlencoded
+    body:
+      Action: AssumeRoleWithWebIdentity
+      Version: "2011-06-15"
+      RoleArn: "{{ aws_role_arn }}"
+      RoleSessionName: ansible-check
+      DurationSeconds: "900"
+      WebIdentityToken: "{{ aws_token_raw.content | b64decode | trim }}"
+    return_content: true
+  register: aws_sts_check
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when: aws_sts_check_enabled | bool
+
+- name: Stop if AWS does not accept the token
+  ansible.builtin.assert:
+    that:
+      - aws_sts_check.status | default(0) == 200
+    fail_msg: >-
+      AWS STS refused the token (HTTP {{ aws_sts_check.status | default('no answer') }}). Grafana was not changed.
+      {{ (aws_sts_check.content | default(aws_sts_check.msg | default(''))) if (aws_sts_check.status | default(0)) != 200 else '' }}
+      InvalidIdentityToken: the OIDC provider of the AWS stack does not match iss/aud of the token.
+      AccessDenied: aud or sub differs from the trust of the role, or aws_role_arn is wrong.
+      No answer: this VM cannot reach sts.{{ aws_region }}.amazonaws.com on port 443 (Grafana needs it too).
+    quiet: true
+  when: aws_sts_check_enabled | bool
+
+- name: Create the drop-in directory of the Grafana service
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ grafana_service_name }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Written only after the checks above. The handlers (Reload systemd, Restart grafana) run at the end of the play.
+- name: Give the Grafana service its AWS environment
+  ansible.builtin.template:
+    src: grafana-aws-federation.conf.j2
+    dest: "/etc/systemd/system/{{ grafana_service_name }}.service.d/aws-federation.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart grafana
+
+- name: Enable and start the token timer
+  ansible.builtin.systemd:
+    name: grafana-aws-token.timer
+    enabled: true
+    state: started

@@ -1,0 +1,276 @@
+{
+  "title": "Lighthouse - Remote Access",
+  "uid": "lighthouse-remote-access",
+  "description": "OpenVPN availability behind the network load balancer: healthy targets, active connections and new connections.",
+  "schemaVersion": 39,
+  "editable": true,
+  "graphTooltip": 1,
+  "timezone": "browser",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "templating": {
+    "list": [
+      {
+        "name": "region",
+        "label": "Region",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "8s123msinglish"
+        },
+        "current": {
+          "text": "ap-southeast-2",
+          "value": "ap-southeast-2",
+          "selected": true
+        },
+        "query": {
+          "queryType": "ec2InstanceAttributes",
+          "region": "default",
+          "attributeName": "Tags.region",
+          "ec2Filters": {},
+          "refId": "region"
+        }
+      },
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "8s123msinglish"
+        },
+        "current": {
+          "text": "production",
+          "value": "production",
+          "selected": true
+        },
+        "query": {
+          "queryType": "ec2InstanceAttributes",
+          "region": "$region",
+          "attributeName": "Tags.Environment",
+          "ec2Filters": {},
+          "refId": "environment"
+        }
+      },
+      {
+        "name": "instance",
+        "label": "Instance",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "8s123msinglish"
+        },
+        "query": {
+          "queryType": "ec2InstanceAttributes",
+          "region": "$region",
+          "attributeName": "Tags.Instance",
+          "ec2Filters": {
+            "tag:Environment": [
+              "$environment"
+            ]
+          },
+          "refId": "instance"
+        },
+        "includeAll": true,
+        "allValue": "*",
+        "multi": true,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "type": "timeseries",
+      "title": "Healthy targets",
+      "description": "Healthy hosts per selected OpenVPN target group (one line each). 0 on a line means no VPN through that group (P1 alarm after 3 minutes).",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "8s123msinglish"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/NetworkELB",
+          "metricName": "HealthyHostCount",
+          "dimensions": {
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
+          },
+          "statistic": "Minimum",
+          "period": "60",
+          "matchExact": false,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "red"
+              },
+              {
+                "value": 1,
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "type": "timeseries",
+      "title": "Active VPN connections",
+      "description": "Active flows (average per 5 minutes). P2 alarm when below the expected range for 15 minutes.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "8s123msinglish"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/NetworkELB",
+          "metricName": "ActiveFlowCount",
+          "dimensions": {
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
+          },
+          "statistic": "Average",
+          "period": "300",
+          "matchExact": false,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "type": "timeseries",
+      "title": "New connections per hour",
+      "description": "New flows per hour. Investigation only, no alarm.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "8s123msinglish"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/NetworkELB",
+          "metricName": "NewFlowCount",
+          "dimensions": {
+            "Environment": "$environment",
+            "Instance": "$instance",
+            "region": "$region"
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "matchExact": false,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    }
+  ]
+}

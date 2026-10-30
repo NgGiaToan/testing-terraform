@@ -1,0 +1,563 @@
+{
+  "title": "Lighthouse - Platform",
+  "uid": "lighthouse-platform",
+  "description": "Management-account quotas, backups and alert delivery: quota usage, last AMI snapshot, Lambda errors and throttles, and SNS delivery failures.",
+  "schemaVersion": 39,
+  "editable": true,
+  "graphTooltip": 1,
+  "timezone": "browser",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "templating": {
+    "list": [
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "custom",
+        "query": "dev,stg,prd",
+        "current": {
+          "text": "prd",
+          "value": "prd",
+          "selected": true
+        },
+        "options": [
+          {
+            "text": "dev",
+            "value": "dev",
+            "selected": false
+          },
+          {
+            "text": "stg",
+            "value": "stg",
+            "selected": false
+          },
+          {
+            "text": "prd",
+            "value": "prd",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "region",
+        "label": "Region",
+        "type": "query",
+        "refresh": 1,
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "8s123msinglish"
+        },
+        "current": {
+          "text": "ap-southeast-2",
+          "value": "ap-southeast-2",
+          "selected": true
+        },
+        "query": {
+          "queryType": "ec2InstanceAttributes",
+          "region": "default",
+          "attributeName": "Tags.region",
+          "ec2Filters": {},
+          "refId": "region"
+        }
+      },
+      {
+        "name": "customer",
+        "label": "Customer code",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "type": "timeseries",
+      "title": "Quota usage %",
+      "description": "AWS WAF quotas of the account in the region (web ACLs 100, rule groups 100, IP sets 100, regex pattern sets 10), as % of the quota. The limits are written in each query (and in modules/alert-delivery var.quotas): change them here when a quota is raised. P3 above 80%, P2 above 95%.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "8s123msinglish"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "webacl",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/Usage",
+          "metricName": "ResourceCount",
+          "dimensions": {
+            "Resource": "WebAclsPerAccountRegional"
+          },
+          "statistic": "Maximum",
+          "period": "300",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "B",
+          "id": "rulegroup",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/Usage",
+          "metricName": "ResourceCount",
+          "dimensions": {
+            "Resource": "RuleGroupsPerAccountRegional"
+          },
+          "statistic": "Maximum",
+          "period": "300",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "C",
+          "id": "ipset",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/Usage",
+          "metricName": "ResourceCount",
+          "dimensions": {
+            "Resource": "IpSetsPerAccountRegional"
+          },
+          "statistic": "Maximum",
+          "period": "300",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "D",
+          "id": "regexset",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/Usage",
+          "metricName": "ResourceCount",
+          "dimensions": {
+            "Resource": "RegexPatternSetsPerAccountRegional"
+          },
+          "statistic": "Maximum",
+          "period": "300",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "E",
+          "id": "webaclpct",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "webacl / 100 * 100",
+          "label": "WAF web ACLs",
+          "period": "300",
+          "hide": false
+        },
+        {
+          "refId": "F",
+          "id": "rulegrouppct",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "rulegroup / 100 * 100",
+          "label": "WAF rule groups",
+          "period": "300",
+          "hide": false
+        },
+        {
+          "refId": "G",
+          "id": "ipsetpct",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "ipset / 100 * 100",
+          "label": "WAF IP sets",
+          "period": "300",
+          "hide": false
+        },
+        {
+          "refId": "H",
+          "id": "regexsetpct",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "regexset / 10 * 100",
+          "label": "WAF regex pattern sets",
+          "period": "300",
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "value": 80,
+                "color": "yellow"
+              },
+              {
+                "value": 95,
+                "color": "orange"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "type": "timeseries",
+      "title": "AMI snapshot succeeded",
+      "description": "Daily AMI snapshot job for this customer, per hour. P1 alarm after 25 hours without a success.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "8s123msinglish"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "Lighthouse/Backup",
+          "metricName": "SnapshotSucceeded",
+          "dimensions": {
+            "Customer": "$customer"
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "matchExact": true,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "red"
+              },
+              {
+                "value": 1,
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "type": "timeseries",
+      "title": "Lambda errors",
+      "description": "Alert formatter Lambda of one environment and region (management account); change Environment or Region to see another. P2 alarm on any error.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "8s123msinglish"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/Lambda",
+          "metricName": "Errors",
+          "dimensions": {
+            "FunctionName": "lighthouse-alerting-$environment-$region-formatter"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "value": 1,
+                "color": "orange"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "type": "timeseries",
+      "title": "Lambda throttles",
+      "description": "Alert formatter Lambda of one environment and region (management account); change Environment or Region to see another. P2 alarm on any throttle.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "8s123msinglish"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/Lambda",
+          "metricName": "Throttles",
+          "dimensions": {
+            "FunctionName": "lighthouse-alerting-$environment-$region-formatter"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "value": 1,
+                "color": "orange"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "type": "timeseries",
+      "title": "SNS delivery failures",
+      "description": "Failed notifications of the three priority topics of the chosen Environment and Region (management account). P2 alarm (Engineering) on any failure.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "8s123msinglish"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "id": "a",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/SNS",
+          "metricName": "NumberOfNotificationsFailed",
+          "dimensions": {
+            "TopicName": "lighthouse-alerting-$environment-$region-alerts-p1"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
+          "hide": false
+        },
+        {
+          "refId": "B",
+          "id": "b",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/SNS",
+          "metricName": "NumberOfNotificationsFailed",
+          "dimensions": {
+            "TopicName": "lighthouse-alerting-$environment-$region-alerts-p2"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
+          "hide": false
+        },
+        {
+          "refId": "C",
+          "id": "c",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/SNS",
+          "metricName": "NumberOfNotificationsFailed",
+          "dimensions": {
+            "TopicName": "lighthouse-alerting-$environment-$region-alerts-p3"
+          },
+          "statistic": "Sum",
+          "period": "300",
+          "matchExact": true,
+          "hide": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "value": 1,
+                "color": "orange"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    }
+  ]
+}

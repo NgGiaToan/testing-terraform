@@ -1,0 +1,42 @@
+---
+# Values passed in from outside (extra vars, group_vars, a vars file or the environment, see README.md)
+# have no default here; tasks/main.yml stops with a clear message when one is missing:
+#
+#   prometheus_url                 prometheus_version             prometheus_uid
+#   azure_subscription_id          azure_monitor_uid
+#   cloudwatch_default_region      (only when cloudwatch_enabled)
+#   aws_role_arn                   azure_mi_client_id             azure_audience
+#                                  (only when aws_federation_enabled)
+#   grafana_admin_password         (to reload Grafana; keep it in Ansible Vault or the environment)
+#
+# A uid that already exists in Grafana must be passed unchanged, or Grafana creates a second datasource and
+# prune: true deletes the old one. New uid: tr -dc A-Z0-9 </dev/urandom | head -c 17; echo
+
+# AWS CloudWatch (one account, AWS SDK Default)
+cloudwatch_enabled: true
+cloudwatch_uid: lighthouse-cw-management
+# Leave empty with the Managed Identity federation (AWS_ROLE_ARN comes from the service environment).
+cloudwatch_assume_role_arn: ""
+
+# AWS identity of the Grafana service: Azure Managed Identity token -> AWS web identity federation.
+# Turn it off when the Grafana server gets its AWS identity another way (an instance role, for example).
+aws_federation_enabled: "{{ cloudwatch_enabled }}"
+aws_region: "{{ cloudwatch_default_region }}"
+# Must stay under /run (a directory of its own: the service creates it, root:grafana, 0750).
+aws_token_file: /run/aws-web-identity/token
+# Must stay under the lifetime of the Azure token (expires_in of the metadata answer; Microsoft's sample shows 3599 s,
+# check the real value on your VM). AWS reads the file again at each refresh of its credentials.
+aws_token_refresh: 30min
+
+# Optional check of the token before Grafana is touched. azure_mi_object_id is the object (principal) ID of the
+# Managed Identity, the same value as grafana_azure_subject in the AWS stack: when set, the sub claim must be it.
+# aws_sts_check_enabled calls AWS STS once with the token (needs port 443 to sts.<aws_region>.amazonaws.com).
+azure_mi_object_id: ""
+aws_sts_check_enabled: true
+
+# Where Grafana reads its provisioning files and how to reload / restart it.
+grafana_provisioning_dir: /etc/grafana/provisioning
+grafana_url: http://localhost:3000
+grafana_admin_user: admin
+grafana_service_name: grafana-server
+grafana_group: grafana

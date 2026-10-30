@@ -1,0 +1,12 @@
+{
+  "name": "acme",
+  "uid": "lighthouse-cw-acme",
+  "type": "cloudwatch",
+  "access": "proxy",
+  "isDefault": false,
+  "jsonData": {
+    "authType": "default",
+    "assumeRoleArn": "arn:aws:iam::222222222222:role/prod-acme-monitoring-grafana-read",
+    "defaultRegion": "ap-southeast-2"
+  }
+}

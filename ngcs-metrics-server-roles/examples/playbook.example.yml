@@ -1,0 +1,14 @@
+---
+# Values can come from the environment of the machine that runs Ansible (a CI job, for example):
+#   export GRAFANA_ADMIN_PASSWORD=...  CLOUDWATCH_REGION=ap-southeast-2  AZURE_SUBSCRIPTION_ID=...
+- hosts: grafana
+  become: true
+  vars_files:
+    - vars.example.yml            # or: group_vars/grafana.yml, loaded automatically
+  roles:
+    - role: config
+      vars:
+        grafana_admin_password: "{{ lookup('ansible.builtin.env', 'GRAFANA_ADMIN_PASSWORD') }}"
+        # Optional: the environment wins over the vars file for these two.
+        cloudwatch_default_region: "{{ lookup('ansible.builtin.env', 'CLOUDWATCH_REGION') | default('ap-southeast-2', true) }}"
+        azure_subscription_id: "{{ lookup('ansible.builtin.env', 'AZURE_SUBSCRIPTION_ID') | default('<azure subscription id>', true) }}"
