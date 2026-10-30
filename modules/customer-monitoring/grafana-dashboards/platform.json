@@ -86,7 +86,7 @@
       },
       "type": "timeseries",
       "title": "Quota usage %",
-      "description": "VPCs and Elastic IPs of the management account, per region. P3 above 80%, P2 above 95%.",
+      "description": "AWS WAF quotas of the account in the region (web ACLs 100, rule groups 100, IP sets 100, regex pattern sets 10), as % of the quota. The limits are written in each query (and in modules/alert-delivery var.quotas): change them here when a quota is raised. P3 above 80%, P2 above 95%.",
       "datasource": {
         "type": "cloudwatch",
         "uid": "8s123msinglish"
@@ -94,19 +94,118 @@
       "targets": [
         {
           "refId": "A",
-          "id": "a",
+          "id": "webacl",
           "queryMode": "Metrics",
           "metricQueryType": 0,
           "metricEditorMode": 0,
           "region": "$region",
-          "namespace": "Lighthouse/Quotas",
-          "metricName": "QuotaUsagePercent",
+          "namespace": "AWS/Usage",
+          "metricName": "ResourceCount",
           "dimensions": {
-            "Quota": "*"
+            "Resource": "WebAclsPerAccountRegional"
           },
           "statistic": "Maximum",
           "period": "300",
-          "matchExact": false,
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "B",
+          "id": "rulegroup",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/Usage",
+          "metricName": "ResourceCount",
+          "dimensions": {
+            "Resource": "RuleGroupsPerAccountRegional"
+          },
+          "statistic": "Maximum",
+          "period": "300",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "C",
+          "id": "ipset",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/Usage",
+          "metricName": "ResourceCount",
+          "dimensions": {
+            "Resource": "IpSetsPerAccountRegional"
+          },
+          "statistic": "Maximum",
+          "period": "300",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "D",
+          "id": "regexset",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "$region",
+          "namespace": "AWS/Usage",
+          "metricName": "ResourceCount",
+          "dimensions": {
+            "Resource": "RegexPatternSetsPerAccountRegional"
+          },
+          "statistic": "Maximum",
+          "period": "300",
+          "matchExact": true,
+          "hide": true
+        },
+        {
+          "refId": "E",
+          "id": "webaclpct",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "webacl / 100 * 100",
+          "label": "WAF web ACLs",
+          "period": "300",
+          "hide": false
+        },
+        {
+          "refId": "F",
+          "id": "rulegrouppct",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "rulegroup / 100 * 100",
+          "label": "WAF rule groups",
+          "period": "300",
+          "hide": false
+        },
+        {
+          "refId": "G",
+          "id": "ipsetpct",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "ipset / 100 * 100",
+          "label": "WAF IP sets",
+          "period": "300",
+          "hide": false
+        },
+        {
+          "refId": "H",
+          "id": "regexsetpct",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 1,
+          "region": "$region",
+          "expression": "regexset / 10 * 100",
+          "label": "WAF regex pattern sets",
+          "period": "300",
           "hide": false
         }
       ],
