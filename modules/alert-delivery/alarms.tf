@@ -68,114 +68,16 @@ resource "aws_cloudwatch_metric_alarm" "firewall_drops" {
 }
 
 # --- Regional quotas -------------------------------------------------------------------
+# Usage comes from the AWS/Usage metrics that AWS publishes itself, so nothing here publishes a metric (no Lambda).
+# The alarm turns the count into a percentage with metric math: SERVICE_QUOTA(usage) when var.quotas has no limit
+# (the service integrates its usage metrics with Service Quotas), else usage / limit. var.quotas holds the
+# AWS/Usage dimensions of each quota.
 
-data "archive_file" "quota_publisher" {
-  type        = "zip"
-  source_file = "${path.module}/lambda_src/quota_publisher.py"
-  output_path = "${path.module}/lambda_src/quota_publisher.zip"
-}
-
-resource "aws_iam_role" "quota_publisher" {
-  name               = "${local.name_prefix}-quota-publisher"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
-  tags               = local.tags
-}
-
-data "aws_iam_policy_document" "quota_publisher" {
-  statement {
-    sid    = "ReadUsageAndQuotas"
-    effect = "Allow"
-    actions = [
-      "ec2:DescribeVpcs",
-      "ec2:DescribeAddresses",
-      "servicequotas:GetServiceQuota",
-      "servicequotas:GetAWSDefaultServiceQuota",
-    ]
-    resources = ["*"]
-  }
-
-  statement {
-    sid       = "PublishQuotaMetric"
-    effect    = "Allow"
-    actions   = ["cloudwatch:PutMetricData"]
-    resources = ["*"]
-    condition {
-      test     = "StringEquals"
-      variable = "cloudwatch:namespace"
-      values   = ["Lighthouse/Quotas"]
-    }
-  }
-
-  statement {
-    sid       = "WriteLogs"
-    effect    = "Allow"
-    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-    resources = ["${aws_cloudwatch_log_group.quota_publisher.arn}:*"]
-  }
-}
-
-resource "aws_iam_role_policy" "quota_publisher" {
-  name   = "${local.name_prefix}-quota-publisher"
-  role   = aws_iam_role.quota_publisher.id
-  policy = data.aws_iam_policy_document.quota_publisher.json
-}
-
-resource "aws_cloudwatch_log_group" "quota_publisher" {
-  name              = "/aws/lambda/${local.name_prefix}-quota-publisher"
-  retention_in_days = 30
-  tags              = local.tags
-}
-
-resource "aws_lambda_function" "quota_publisher" {
-  function_name    = "${local.name_prefix}-quota-publisher"
-  role             = aws_iam_role.quota_publisher.arn
-  handler          = "quota_publisher.handler"
-  runtime          = "python3.12"
-  timeout          = 30
-  filename         = data.archive_file.quota_publisher.output_path
-  source_code_hash = data.archive_file.quota_publisher.output_base64sha256
-  tags             = local.tags
-
-  environment {
-    variables = {
-      QUOTAS = jsonencode([for name, q in var.quotas : merge(q, { name = name })])
-    }
-  }
-
-  depends_on = [aws_cloudwatch_log_group.quota_publisher, aws_iam_role_policy.quota_publisher]
-}
-
-# Every 5 minutes, to match the alarm period: with missing data treated as not breaching, a
-# sparser schedule would let an alarm flap to OK between datapoints.
-resource "aws_cloudwatch_event_rule" "quota_publisher" {
-  name                = "${local.name_prefix}-quota-publisher"
-  schedule_expression = "rate(5 minutes)"
-  tags                = local.tags
-}
-
-resource "aws_cloudwatch_event_target" "quota_publisher" {
-  rule = aws_cloudwatch_event_rule.quota_publisher.name
-  arn  = aws_lambda_function.quota_publisher.arn
-}
-
-resource "aws_lambda_permission" "quota_publisher" {
-  statement_id  = "AllowEventBridge"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.quota_publisher.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.quota_publisher.arn
-}
-
-# Missing data is "not breaching" — the job's own Errors alarm covers a stopped job.
+# Missing data is "not breaching": a usage metric with no datapoints (none of that resource exists) is not an alert.
 resource "aws_cloudwatch_metric_alarm" "quota_warning" {
   for_each            = var.quotas
   alarm_name          = "${local.alarm_names["quota-80"]}-${each.key}"
   alarm_description   = local.alarm_descriptions["quota-80"]
-  namespace           = "Lighthouse/Quotas"
-  metric_name         = "QuotaUsagePercent"
-  dimensions          = { Quota = each.key }
-  statistic           = "Maximum"
-  period              = 300
   evaluation_periods  = 1
   datapoints_to_alarm = 1
   threshold           = var.quota_warning_percent
@@ -184,17 +86,32 @@ resource "aws_cloudwatch_metric_alarm" "quota_warning" {
   alarm_actions       = local.alarm_actions["quota-80"]
   ok_actions          = local.alarm_actions["quota-80"]
   tags                = local.tags
+
+  metric_query {
+    id          = "usage"
+    return_data = false
+
+    metric {
+      namespace   = "AWS/Usage"
+      metric_name = "ResourceCount"
+      period      = 300
+      stat        = "Maximum"
+      dimensions  = each.value.dimensions
+    }
+  }
+
+  metric_query {
+    id          = "pct"
+    expression  = each.value.limit == null ? "usage / SERVICE_QUOTA(usage) * 100" : "usage / ${each.value.limit} * 100"
+    label       = "QuotaUsagePercent"
+    return_data = true
+  }
 }
 
 resource "aws_cloudwatch_metric_alarm" "quota_critical" {
   for_each            = var.quotas
   alarm_name          = "${local.alarm_names["quota-95"]}-${each.key}"
   alarm_description   = local.alarm_descriptions["quota-95"]
-  namespace           = "Lighthouse/Quotas"
-  metric_name         = "QuotaUsagePercent"
-  dimensions          = { Quota = each.key }
-  statistic           = "Maximum"
-  period              = 300
   evaluation_periods  = 1
   datapoints_to_alarm = 1
   threshold           = var.quota_critical_percent
@@ -203,10 +120,51 @@ resource "aws_cloudwatch_metric_alarm" "quota_critical" {
   alarm_actions       = local.alarm_actions["quota-95"]
   ok_actions          = local.alarm_actions["quota-95"]
   tags                = local.tags
+
+  metric_query {
+    id          = "usage"
+    return_data = false
+
+    metric {
+      namespace   = "AWS/Usage"
+      metric_name = "ResourceCount"
+      period      = 300
+      stat        = "Maximum"
+      dimensions  = each.value.dimensions
+    }
+  }
+
+  metric_query {
+    id          = "pct"
+    expression  = each.value.limit == null ? "usage / SERVICE_QUOTA(usage) * 100" : "usage / ${each.value.limit} * 100"
+    label       = "QuotaUsagePercent"
+    return_data = true
+  }
 }
 
 # --- Alert delivery path ---------------------------------------------------------------
-# These go to the pipeline topic (email), not through the Lambda they watch.
+# These go to the pipeline topic, which delivers to the same alert delivery Lambda (formatter.tf). Known
+# limit: if that Lambda is down, lambda-errors and lambda-throttles cannot reach Slack through it.
+
+# Delivery failures on each alert topic (alarms of every account arrive here).
+resource "aws_cloudwatch_metric_alarm" "sns_failures" {
+  for_each            = local.priorities
+  alarm_name          = "${local.alarm_names["sns-failures"]}-${lower(each.key)}"
+  alarm_description   = local.alarm_descriptions["sns-failures"]
+  namespace           = "AWS/SNS"
+  metric_name         = "NumberOfNotificationsFailed"
+  dimensions          = { TopicName = aws_sns_topic.alerts[each.key].name }
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.pipeline.arn]
+  ok_actions          = [aws_sns_topic.pipeline.arn]
+  tags                = local.tags
+}
 
 resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
   alarm_name          = local.alarm_names["lambda-errors"]
@@ -232,24 +190,6 @@ resource "aws_cloudwatch_metric_alarm" "lambda_throttles" {
   namespace           = "AWS/Lambda"
   metric_name         = "Throttles"
   dimensions          = { FunctionName = aws_lambda_function.formatter.function_name }
-  statistic           = "Sum"
-  period              = 300
-  evaluation_periods  = 1
-  datapoints_to_alarm = 1
-  threshold           = 1
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.pipeline.arn]
-  ok_actions          = [aws_sns_topic.pipeline.arn]
-  tags                = local.tags
-}
-
-resource "aws_cloudwatch_metric_alarm" "quota_job_errors" {
-  alarm_name          = local.alarm_names["quota-job-errors"]
-  alarm_description   = local.alarm_descriptions["quota-job-errors"]
-  namespace           = "AWS/Lambda"
-  metric_name         = "Errors"
-  dimensions          = { FunctionName = aws_lambda_function.quota_publisher.function_name }
   statistic           = "Sum"
   period              = 300
   evaluation_periods  = 1
