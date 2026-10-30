@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars and fill in. No secret goes in this file: pass the Grafana token as an
+# environment variable (TF_VAR_grafana_token).
+
+grafana_url = "https://mycompany.grafana.net"
+
+# The deployments of environment/shr-monitoring that Grafana watches: one per environment, all in
+# `region` below. An environment with no deployment raises no alert (no data counts as OK), so list
+# only those that exist.
+alert_environments = ["dev", "stg", "prd"]
+
+# The management and customer CloudWatch data sources the rules read are created by
+# environment/grafana-datasources, applied first.
+region = "ap-southeast-2"
+
+# The existing Grafana contact point that posts to Slack (use a channel for system health)
+slack_contact_point_name = "slack-system-health"

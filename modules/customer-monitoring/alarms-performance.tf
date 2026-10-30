@@ -254,23 +254,3 @@ resource "aws_cloudwatch_metric_alarm" "backup" {
   tags                = local.common_tags
 }
 
-# Delivery failures on each priority topic. These actions go to the pipeline topic (email),
-# not the priority topics, so they still arrive when the Lambda or SNS delivery is broken.
-resource "aws_cloudwatch_metric_alarm" "sns_failures" {
-  for_each            = local.priorities
-  alarm_name          = "${local.alarm_names["sns-failures"]}-${lower(each.key)}"
-  alarm_description   = local.alarm_descriptions["sns-failures"]
-  namespace           = "AWS/SNS"
-  metric_name         = "NumberOfNotificationsFailed"
-  dimensions          = { TopicName = aws_sns_topic.alerts[each.key].name }
-  statistic           = "Sum"
-  period              = 300
-  evaluation_periods  = 1
-  datapoints_to_alarm = 1
-  threshold           = 1
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.pipeline.arn]
-  ok_actions          = [aws_sns_topic.pipeline.arn]
-  tags                = local.common_tags
-}

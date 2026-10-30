@@ -1,5 +1,6 @@
 resource "aws_sns_topic" "security_alerts" {
-  name = local.name_prefix
+  name              = local.name_prefix
+  kms_master_key_id = aws_kms_key.security_alerts.id
 }
 
 # EventBridge rules (eventbridge.tf) publish directly to this topic, which requires an

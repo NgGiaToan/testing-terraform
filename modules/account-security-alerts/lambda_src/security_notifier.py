@@ -1,7 +1,6 @@
-"""Formats account-level security/capacity notifications and posts them to Slack.
-Two shapes arrive on the same SNS topic: raw EventBridge events (GuardDuty, Security Hub,
-IAM Access Analyzer) and CloudWatch alarm notifications (service quotas) — this module has
-no per-customer field to key off of either way, unlike modules/customer-monitoring."""
+"""Formats account-level security notifications and posts them to Slack. Raw EventBridge
+events (GuardDuty, Security Hub, IAM Access Analyzer) arrive on the SNS topic — this module
+has no per-customer field to key off of, unlike modules/customer-monitoring."""
 
 import json
 import os
@@ -55,15 +54,6 @@ def _format_access_analyzer(detail):
     ])
 
 
-def _format_cloudwatch_alarm(message):
-    alarm_name = message.get("AlarmName", "unknown-alarm")
-    state = message.get("NewStateValue", "UNKNOWN")
-    return "\n".join([
-        f"*[{state}] {alarm_name}*",
-        message.get("NewStateReason", ""),
-    ])
-
-
 def _format_generic(subject, body):
     return "\n".join([f"*{subject or 'Account alert'}*", body])
 
@@ -104,8 +94,6 @@ def handler(event, _context):
             text = _format_security_hub(detail)
         elif source == "aws.access-analyzer":
             text = _format_access_analyzer(detail)
-        elif "AlarmName" in message:
-            text = _format_cloudwatch_alarm(message)
         else:
             text = _format_generic(sns.get("Subject"), raw_message)
 

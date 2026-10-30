@@ -1,151 +1,51 @@
-# One topic per priority (alerts-p1/p2/p3) in the customer account. Every alarm publishes to
-# the topic matching its priority; each topic delivers to the formatter Lambda in the
-# management account. Only the alarm message crosses the account boundary.
+# Where the alarms send their notifications.
 #
-# The pipeline topic is the exception: the SNS-failure alarm watches the priority topics'
-# own delivery, so it must not depend on them (or on the Lambda) — it goes out by email.
+# This account has no SNS topics of its own. Every alarm publishes to the priority topic
+# (alerts-p1/p2/p3) of its environment in the management account, in the same region as the alarm,
+# next to that environment's alert delivery Lambda (modules/alert-delivery). The topic's policy there
+# takes alarms from any account, as long as the alarm is named <customer>-<priority>-<key> (the P1
+# topic takes *-P1-*), so adding a customer needs no change on the management side.
+#
+# The topic ARN is built from fixed names, so there is nothing to copy from an output:
+#   arn:aws:sns:<region>:<management_account_id>:<alert_topic_name_prefix>-<alert environment>-<region>-alerts-<p1|p2|p3>
+# The management account must have these topics in this region for this environment: run
+# environment/shr-monitoring with environment=<alert environment> and this region, once.
 
 locals {
   priorities = toset(["P1", "P2", "P3"])
+
+  # The environment the alerts belong to, derived from var.environment (the one name this module
+  # is given), so the two cannot disagree: the standard environments map to dev, stg and prd, and
+  # any other environment keeps its full name. This is the `environment` of the shr-monitoring
+  # deployment whose Lambda, topics and Slack channels receive these alarms.
+  #   dev-cus0001 -> dev     staging-demo -> stg     prod-cus0001 -> prd     demo-foo -> demo-foo
+  alert_environment = (
+    can(regex("^dev(-|$)", var.environment)) ? "dev" :
+    can(regex("^(stg|staging)(-|$)", var.environment)) ? "stg" :
+    can(regex("^(prd|prod)(-|$)", var.environment)) ? "prd" :
+    var.environment
+  )
+
+  # Explicit ARNs win. Otherwise they are built from management_account_id; with neither set
+  # there are no topics, and the alarms are created without notification actions.
+  central_alert_topic_arns = var.central_alert_topic_arns != null ? var.central_alert_topic_arns : (
+    var.management_account_id == null ? tomap({}) : tomap({
+      for p in local.priorities :
+      p => "arn:aws:sns:${var.region}:${var.management_account_id}:${var.alert_topic_name_prefix}-${local.alert_environment}-${var.region}-alerts-${lower(p)}"
+    })
+  )
 }
 
-# Topics are encrypted with a customer-managed key whose policy allows CloudWatch. The AWS
-# managed key (alias/aws/sns) cannot be shared with CloudWatch, which makes the alarm
-# action fail.
-data "aws_iam_policy_document" "alerts_key" {
-  statement {
-    sid       = "EnableRootAccountAccess"
-    effect    = "Allow"
-    actions   = ["kms:*"]
-    resources = ["*"]
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:aws:iam::${local.account_id}:root"]
+# The alert environment is part of the topic names, and a shr-monitoring deployment's `environment`
+# is 1-13 characters of lowercase letters, digits and hyphens. A name outside that can have no
+# deployment, so the alarms would point at topics that cannot exist and fail to notify without any
+# error here. This fails the plan instead. It cannot check that the deployment exists: run
+# environment/shr-monitoring for this environment and region first.
+resource "terraform_data" "alert_environment_check" {
+  lifecycle {
+    precondition {
+      condition     = var.central_alert_topic_arns != null || var.management_account_id == null || can(regex("^[a-z0-9]([a-z0-9-]{0,11}[a-z0-9])?$", local.alert_environment))
+      error_message = "The alert environment \"${local.alert_environment}\" (from environment \"${var.environment}\") cannot be a shr-monitoring deployment: it must be 1-13 characters, lowercase letters, digits and hyphens, not starting or ending with a hyphen. Use a shorter environment name, or set central_alert_topic_arns."
     }
   }
-
-  statement {
-    sid       = "AllowCloudWatchAlarms"
-    effect    = "Allow"
-    actions   = ["kms:Decrypt", "kms:GenerateDataKey*"]
-    resources = ["*"]
-    principals {
-      type        = "Service"
-      identifiers = ["cloudwatch.amazonaws.com"]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceAccount"
-      values   = [local.account_id]
-    }
-  }
-
-  statement {
-    sid       = "AllowBudgetsAndCostAnomalyDetection"
-    effect    = "Allow"
-    actions   = ["kms:Decrypt", "kms:GenerateDataKey*"]
-    resources = ["*"]
-    principals {
-      type        = "Service"
-      identifiers = ["budgets.amazonaws.com", "costalerts.amazonaws.com"]
-    }
-  }
-}
-
-resource "aws_kms_key" "alerts" {
-  description         = "Encrypts the ${var.environment} alert SNS topics"
-  enable_key_rotation = true
-  policy              = data.aws_iam_policy_document.alerts_key.json
-  tags                = local.common_tags
-}
-
-resource "aws_kms_alias" "alerts" {
-  name          = "alias/${local.name_prefix}-alerts"
-  target_key_id = aws_kms_key.alerts.key_id
-}
-
-resource "aws_sns_topic" "alerts" {
-  for_each          = local.priorities
-  name              = "${local.name_prefix}-alerts-${lower(each.key)}"
-  kms_master_key_id = aws_kms_key.alerts.arn
-  tags              = merge(local.common_tags, { Priority = each.key })
-}
-
-data "aws_iam_policy_document" "alerts_topic" {
-  for_each = local.priorities
-
-  # Same-account publishers (CloudWatch alarms), as in SNS's default topic policy.
-  statement {
-    sid    = "AllowAccountPublish"
-    effect = "Allow"
-    actions = [
-      "SNS:GetTopicAttributes",
-      "SNS:Subscribe",
-      "SNS:ListSubscriptionsByTopic",
-      "SNS:Publish",
-    ]
-    resources = [aws_sns_topic.alerts[each.key].arn]
-    principals {
-      type        = "AWS"
-      identifiers = ["*"]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "AWS:SourceOwner"
-      values   = [local.account_id]
-    }
-  }
-
-  statement {
-    sid       = "AllowBudgetsAndCostAnomalyPublish"
-    effect    = "Allow"
-    actions   = ["SNS:Publish"]
-    resources = [aws_sns_topic.alerts[each.key].arn]
-    principals {
-      type        = "Service"
-      identifiers = ["budgets.amazonaws.com", "costalerts.amazonaws.com"]
-    }
-  }
-
-  dynamic "statement" {
-    for_each = var.management_account_id != null ? [1] : []
-    content {
-      sid       = "AllowManagementAccountSubscribe"
-      effect    = "Allow"
-      actions   = ["SNS:Subscribe", "SNS:Receive", "SNS:GetTopicAttributes", "SNS:ListSubscriptionsByTopic"]
-      resources = [aws_sns_topic.alerts[each.key].arn]
-      principals {
-        type        = "AWS"
-        identifiers = ["arn:aws:iam::${var.management_account_id}:root"]
-      }
-    }
-  }
-}
-
-resource "aws_sns_topic_policy" "alerts" {
-  for_each = local.priorities
-  arn      = aws_sns_topic.alerts[each.key].arn
-  policy   = data.aws_iam_policy_document.alerts_topic[each.key].json
-}
-
-# Cross-account delivery: the topic owner subscribes the management account's Lambda. The
-# Lambda's resource policy (modules/alert-formatter) permits invocation from this account.
-resource "aws_sns_topic_subscription" "formatter" {
-  for_each  = var.formatter_lambda_arn != null ? local.priorities : toset([])
-  topic_arn = aws_sns_topic.alerts[each.key].arn
-  protocol  = "lambda"
-  endpoint  = var.formatter_lambda_arn
-}
-
-resource "aws_sns_topic" "pipeline" {
-  name              = "${local.name_prefix}-alerts-pipeline"
-  kms_master_key_id = aws_kms_key.alerts.arn
-  tags              = local.common_tags
-}
-
-resource "aws_sns_topic_subscription" "pipeline_email" {
-  for_each  = toset(var.engineering_alert_emails)
-  topic_arn = aws_sns_topic.pipeline.arn
-  protocol  = "email"
-  endpoint  = each.value
 }

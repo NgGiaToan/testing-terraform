@@ -1,4 +1,4 @@
-# Account-wide: GuardDuty, Security Hub, IAM Access Analyzer, and service quotas have no
+# Account-wide: GuardDuty, Security Hub and IAM Access Analyzer have no
 # Customer/Environment scope, unlike modules/customer-monitoring — apply this module once
 # per account, not once per customer.
 
@@ -36,22 +36,4 @@ variable "enable_access_analyzer_alerts" {
   description = "Whether to create the IAM Access Analyzer EventBridge rule. Requires an analyzer already created in this account/region."
   type        = bool
   default     = true
-}
-
-variable "service_quota_checks" {
-  description = <<-EOT
-    Per-quota usage alarms, keyed by a short name. Each entry needs the exact CloudWatch
-    "AWS/Usage" dimensions AWS publishes for that quota — these only exist once "Monitor
-    with CloudWatch" is turned on for that specific quota (Service Quotas console, per
-    quota; Terraform has no resource to toggle this). Confirm the real dimensions via
-    `aws cloudwatch list-metrics --namespace AWS/Usage` after enabling it, before trusting
-    the defaults below — they're best-known values, not verified against a live account.
-  EOT
-  type = map(object({
-    dimensions             = map(string)
-    quota_limit            = number
-    warning_threshold_pct  = optional(number, 80)
-    critical_threshold_pct = optional(number, 95)
-  }))
-  default = {}
 }

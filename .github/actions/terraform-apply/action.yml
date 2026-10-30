@@ -9,7 +9,7 @@ inputs:
     description: "Environment name matching the tfplan-bin-<env-name> artifact produced by terraform-plan"
     required: true
   role-arn:
-    description: "ARN of the read-write apply role to assume via OIDC"
+    description: "ARN of the role to assume via OIDC that grants write access for this environment (github-actions-apply for most environments, github-actions-non-prod for TempStaging)"
     required: true
   backend-config:
     description: "Passed through to `terraform init -backend-config=...`"
@@ -23,6 +23,10 @@ inputs:
     description: "Directory containing the Ansible playbook"
     required: false
     default: "ansible"
+  pr-number:
+    description: "PR number to comment on. Leave empty for push-to-main runs — with no PR to comment on, results go to the job summary instead."
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -53,17 +57,78 @@ runs:
         path: ${{ inputs.working-directory }}
 
     - name: Terraform Apply
+      id: apply
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: terraform apply -no-color tfplan
+      run: |
+        set +e
+        terraform apply -no-color tfplan | tee apply_output.txt
+        exit_code=${PIPESTATUS[0]}
+        {
+          echo "output<<EOF"
+          cat apply_output.txt
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+        exit $exit_code
+      continue-on-error: true
 
-    - name: Install Ansible
-      if: inputs.run-ansible == 'true'
-      shell: bash
-      run: pip install --user ansible-core
+    - name: Comment apply result on PR
+      if: inputs.pr-number != ''
+      uses: actions/github-script@v7
+      env:
+        ENV_NAME: ${{ inputs.env-name }}
+        APPLY_OUTPUT: ${{ steps.apply.outputs.output }}
+        APPLY_OUTCOME: ${{ steps.apply.outcome }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+      with:
+        script: |
+          const icon = process.env.APPLY_OUTCOME === 'success' ? '✅' : '❌';
 
-    - name: Run Ansible playbook (${{ inputs.env-name }})
-      if: inputs.run-ansible == 'true'
+          const output = `### Terraform Apply — ${process.env.ENV_NAME}
+          #### ${icon} Apply: \`${process.env.APPLY_OUTCOME}\`
+
+          <details><summary>Show apply output</summary>
+
+          \`\`\`terraform
+          ${process.env.APPLY_OUTPUT}
+          \`\`\`
+
+          </details>`;
+
+          github.rest.issues.createComment({
+            issue_number: Number(process.env.PR_NUMBER),
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: output
+          });
+
+    - name: Publish apply result to job summary
+      if: inputs.pr-number == ''
       shell: bash
-      working-directory: ${{ inputs.ansible-directory }}
-      run: ansible-playbook playbook.yml
+      env:
+        ENV_NAME: ${{ inputs.env-name }}
+        APPLY_OUTPUT: ${{ steps.apply.outputs.output }}
+        APPLY_OUTCOME: ${{ steps.apply.outcome }}
+      run: |
+        if [ "$APPLY_OUTCOME" = "success" ]; then
+          icon="✅"
+        else
+          icon="❌"
+        fi
+        {
+          echo "### Terraform Apply — $ENV_NAME"
+          echo "#### ${icon} Apply: \`$APPLY_OUTCOME\`"
+          echo
+          echo "<details><summary>Show apply output</summary>"
+          echo
+          echo '```terraform'
+          printf '%s\n' "$APPLY_OUTPUT"
+          echo '```'
+          echo
+          echo "</details>"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Fail if apply failed
+      if: steps.apply.outcome == 'failure'
+      shell: bash
+      run: exit 1

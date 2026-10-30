@@ -1,30 +1,23 @@
 variable "region" {
-  description = "Region where the formatter Lambda is deployed. Customer topics in other regions must be listed in customer_regions."
+  description = "Region where the alert delivery Lambda and the alert topics are deployed. Customer alarms in this region publish to these topics: deploy one stack per region that hosts customers."
   type        = string
+}
+
+variable "environment" {
+  description = "Environment this instance serves: dev, stg or prd, or the full environment name for any other (e.g. demo-foo). It gets its own alert delivery Lambda, IAM role, Slack webhook secret and alert topics, so the alerts of the customer environments wired to it reach only its Slack channels. A customer environment of the same name publishes to these topics (customer-monitoring derives it from its own environment name). The wiring is by name only: the topic policy takes alarms from any account and does not check the environment."
+  type        = string
+
+  validation {
+    # Longest name built from it: the formatter role, lighthouse-alerting-<environment>-<region>-formatter, within IAM's 64 characters.
+    condition     = can(regex("^[a-z0-9]([a-z0-9-]{0,11}[a-z0-9])?$", var.environment))
+    error_message = "environment must be 1-13 characters: lowercase letters, digits and hyphens, not starting or ending with a hyphen."
+  }
 }
 
 variable "slack_webhook_secret_arn" {
-  description = "ARN of an existing secret that holds the Slack webhook URL: one URL for all teams, or JSON like {\"Operations\": \"<url>\", \"Engineering\": \"<url>\"}. If null, the module creates an empty secret. Set its value with the AWS CLI so the URL stays out of Terraform state."
+  description = "ARN of an existing secret, in this region, that holds this environment's Slack webhook URLs as JSON, one per team: {\"Operations\": \"<url>\", \"Engineering\": \"<url>\"}. If null, the module creates an empty secret, lighthouse-alerting-<environment>-<region>-slack-webhooks. Set its value with the AWS CLI so the URL stays out of Terraform state."
   type        = string
   default     = null
-}
-
-variable "customer_regions" {
-  description = "Other regions where customers have alert topics that send to the formatter. Each account in customer_account_ids is allowed in these regions and in the module's own. Opt-in regions are handled automatically (see the AWS caveat in formatter.tf)."
-  type        = list(string)
-  default     = []
-}
-
-variable "customer_account_ids" {
-  description = "Customer AWS account IDs allowed to send alerts to the formatter. Add one per customer at onboarding."
-  type        = list(string)
-  default     = []
-}
-
-variable "engineering_alert_emails" {
-  description = "Engineering emails for the pipeline topic. Alarms on the alert path itself (Lambda errors and throttles, quota job) go out by email, because they must not depend on the formatter."
-  type        = list(string)
-  default     = []
 }
 
 variable "dashboard_url" {
@@ -59,15 +52,18 @@ variable "anomaly_band_width" {
 }
 
 variable "quotas" {
-  description = "Management-account quotas to watch, keyed by the `Quota` metric dimension. `usage` picks the counter in quota_publisher.py (vpcs or elastic-ips). Defaults: VPCs per region and Elastic IPs."
+  description = "Quotas to watch, keyed by a short name used in the alarm name. No Lambda measures anything: each one names a usage metric that AWS publishes itself, `AWS/Usage` `ResourceCount`, by its `dimensions` (exactly the dimensions of that metric, no more, no fewer). `limit` null divides the usage by SERVICE_QUOTA(), which follows the quota automatically but only works for services that integrate their usage metrics with Service Quotas (not AWS WAF, not Amazon VPC); a number divides by that fixed quota instead, so change it when the quota is raised. Quotas with no AWS/Usage metric (VPCs, Elastic IPs, and ALBs/NLBs until their metric is confirmed) cannot be watched here. NOT VERIFIED: that WAF's metric has only the Resource dimension, and that the metric exists in your account (it appears only when at least one such resource exists). Check in CloudWatch > Metrics > Usage > By AWS Resource, or with aws cloudwatch list-metrics --namespace AWS/Usage, before the first apply. Default: the four regional AWS WAF quotas (web ACLs, rule groups, IP sets, regex pattern sets)."
   type = map(object({
-    service_code = string
-    quota_code   = string
-    usage        = string
+    dimensions = map(string)
+    limit      = optional(number)
   }))
   default = {
-    vpcs        = { service_code = "vpc", quota_code = "L-F678F1CE", usage = "vpcs" }
-    elastic-ips = { service_code = "ec2", quota_code = "L-0263D0A3", usage = "elastic-ips" }
+    # AWS WAF, regional (CloudFront WAF is in us-east-1 only: add its Resource values there if needed). Limits are the
+    # documented defaults (web ACLs L-2EC3DE7B, rule groups L-C5BCD850, IP sets L-D6DA96AE, regex pattern sets L-BF0029B0).
+    waf-web-acls    = { dimensions = { Resource = "WebAclsPerAccountRegional" }, limit = 100 }
+    waf-rule-groups = { dimensions = { Resource = "RuleGroupsPerAccountRegional" }, limit = 100 }
+    waf-ip-sets     = { dimensions = { Resource = "IpSetsPerAccountRegional" }, limit = 100 }
+    waf-regex-sets  = { dimensions = { Resource = "RegexPatternSetsPerAccountRegional" }, limit = 10 }
   }
 }
 
@@ -89,15 +85,20 @@ variable "tags" {
   default     = {}
 }
 
+# DISABLED (the Grafana role is not used): see modules/alert-delivery/grafana.tf.
+/*
 variable "grafana_account_id" {
   description = "AWS account ID that Grafana runs in. Null skips the read-only role in this account."
   type        = string
   default     = null
 }
+*/
 
-variable "grafana_external_id" {
-  description = "External ID Grafana uses to assume the read-only role in this account."
-  type        = string
-  default     = null
-  sensitive   = true
+# DISABLED (the IAM user is not used): see modules/alert-delivery/grafana.tf.
+/*
+variable "grafana_user_enabled" {
+  description = "Create an IAM user with the read-only Grafana policy (grafana.tf), for a Grafana server that has no AWS identity to assume a role from. No access key is created: make it by hand (aws iam create-access-key --user-name <grafana_user_name output>) and type it into the data source in the Grafana UI, so it never reaches the Terraform state. Turn it on in one deployment (the user can read every region)."
+  type        = bool
+  default     = false
 }
+*/

@@ -29,22 +29,27 @@ variable "cost_center" {
 
 # --- Alert delivery --------------------------------------------------------------------
 
-variable "formatter_lambda_arn" {
-  description = "ARN of the Slack formatter Lambda (alert-formatter module). Null means alerts are not sent to Slack."
-  type        = string
-  default     = null
-}
-
 variable "management_account_id" {
-  description = "Account ID of the management account that hosts the formatter Lambda"
+  description = "Account ID of the management account whose SNS topics receive this account's alarms (the alert-delivery stack). Null creates the alarms without notification actions."
   type        = string
   default     = null
 }
 
-variable "engineering_alert_emails" {
-  description = "Engineering emails for alert-delivery failures. These bypass Slack on purpose."
-  type        = list(string)
-  default     = []
+variable "alert_topic_name_prefix" {
+  description = "Name prefix of the management account's alert topics: <prefix>-<alert environment>-<region>-alerts-p1/p2/p3 (the alert environment is derived from `environment`, see sns.tf). Must match the alert-delivery module (its shared_prefix, lighthouse-alerting)."
+  type        = string
+  default     = "lighthouse-alerting"
+}
+
+variable "central_alert_topic_arns" {
+  description = "Override: priority => ARN of the SNS topic that receives the alarms, e.g. {P1 = \"arn:...\", P2 = ..., P3 = ...}. Null (default) builds the ARNs from management_account_id, region, alert_topic_name_prefix and the alert environment derived from `environment`."
+  type        = map(string)
+  default     = null
+
+  validation {
+    condition     = var.central_alert_topic_arns == null || alltrue([for p in ["P1", "P2", "P3"] : contains(keys(var.central_alert_topic_arns), p)])
+    error_message = "central_alert_topic_arns must have the keys P1, P2 and P3."
+  }
 }
 
 variable "dashboard_url" {
@@ -55,18 +60,14 @@ variable "dashboard_url" {
 
 # --- Grafana read-only access ----------------------------------------------------------
 
+# DISABLED (the Grafana role is not used): see modules/customer-monitoring/grafana.tf.
+/*
 variable "grafana_account_id" {
   description = "AWS account ID Grafana runs in. Null skips the read-only role."
   type        = string
   default     = null
 }
-
-variable "grafana_external_id" {
-  description = "External ID Grafana uses when assuming the read-only role"
-  type        = string
-  default     = null
-  sensitive   = true
-}
+*/
 
 # --- Monitored resources (null skips the matching alarms) ------------------------------
 
@@ -101,9 +102,19 @@ variable "alb_arn_suffix" {
 }
 
 variable "target_group_arn_suffix" {
-  description = "ARN suffix of the ALB target group. Required if alb_arn_suffix is set."
-  type        = string
+  description = "ARN suffixes of the ALB target groups as a map of name => suffix (one entry is fine). Required if alb_arn_suffix is set. The alarms cover every group in the map: at most 8."
+  type        = map(string)
   default     = null
+
+  validation {
+    condition     = var.alb_arn_suffix == null || (var.target_group_arn_suffix != null && length(var.target_group_arn_suffix) > 0)
+    error_message = "target_group_arn_suffix is required (at least one entry) when alb_arn_suffix is set."
+  }
+
+  validation {
+    condition     = var.target_group_arn_suffix == null || length(var.target_group_arn_suffix) <= 8
+    error_message = "At most 8 target groups: each is a metric of the alarm, plus its combining expression, within the 10 CloudWatch allows."
+  }
 }
 
 variable "nlb_arn_suffix" {
@@ -113,9 +124,19 @@ variable "nlb_arn_suffix" {
 }
 
 variable "nlb_target_group_arn_suffix" {
-  description = "ARN suffix of the OpenVPN target group. Required if nlb_arn_suffix is set."
-  type        = string
+  description = "ARN suffixes of the OpenVPN target groups as a map of name => suffix (one entry is fine). Required if nlb_arn_suffix is set. At most 8."
+  type        = map(string)
   default     = null
+
+  validation {
+    condition     = var.nlb_arn_suffix == null || (var.nlb_target_group_arn_suffix != null && length(var.nlb_target_group_arn_suffix) > 0)
+    error_message = "nlb_target_group_arn_suffix is required (at least one entry) when nlb_arn_suffix is set."
+  }
+
+  validation {
+    condition     = var.nlb_target_group_arn_suffix == null || length(var.nlb_target_group_arn_suffix) <= 8
+    error_message = "At most 8 target groups: each is a metric of the alarm, plus its combining expressions, within the 10 CloudWatch allows."
+  }
 }
 
 variable "waf_web_acl_name" {
@@ -145,6 +166,53 @@ variable "https_availability_canary_name" {
 variable "synthetics_canary_name" {
   description = "Name of the workflow canary (runs every 5 minutes). Null skips the alarm."
   type        = string
+  default     = null
+}
+
+# --- Enable flags: only needed when a value above is not known until apply -----------------
+# Terraform must know at plan time whether a group of alarms exists, but an ID of a resource
+# created in the same apply is only known after it. Set the flag (true or false, a value known
+# at plan) and pass the unknown ID as usual. Null (default) = on when the value above is set.
+
+variable "enable_instance_alarms" {
+  description = "Turn the instance alarms and agent config on or off. Null = on when instance_id is set. Set it when instance_id comes from a resource created in the same apply."
+  type        = bool
+  default     = null
+}
+
+variable "enable_alb_alarms" {
+  description = "Turn the ALB alarms on or off. Null = on when alb_arn_suffix is set. Set it when the ALB is created in the same apply."
+  type        = bool
+  default     = null
+}
+
+variable "enable_nlb_alarms" {
+  description = "Turn the OpenVPN (NLB) alarms on or off. Null = on when nlb_arn_suffix is set. Set it when the NLB is created in the same apply."
+  type        = bool
+  default     = null
+}
+
+variable "enable_waf_alarm" {
+  description = "Turn the WAF alarm on or off. Null = on when waf_web_acl_name is set. Set it when the Web ACL is created in the same apply."
+  type        = bool
+  default     = null
+}
+
+variable "enable_certificate_alarms" {
+  description = "Turn the certificate alarms on or off. Null = on when acm_certificate_arn is set. Set it when the certificate is created in the same apply."
+  type        = bool
+  default     = null
+}
+
+variable "enable_https_canary_alarm" {
+  description = "Turn the HTTPS canary alarm on or off. Null = on when https_availability_canary_name is set. Set it when the canary is created in the same apply."
+  type        = bool
+  default     = null
+}
+
+variable "enable_workflow_canary_alarm" {
+  description = "Turn the workflow canary alarm on or off. Null = on when synthetics_canary_name is set. Set it when the canary is created in the same apply."
+  type        = bool
   default     = null
 }
 
@@ -226,24 +294,4 @@ variable "acm_critical_days" {
   description = "Days left on the certificate for the P1 alarm"
   type        = number
   default     = 7
-}
-
-# --- Cost monitoring -------------------------------------------------------------------
-
-variable "monthly_budget_usd" {
-  description = "Monthly budget in USD. 80% spent or forecast to exceed alerts P3; 100% spent alerts P2."
-  type        = number
-  default     = 500
-}
-
-variable "budget_notification_emails" {
-  description = "Extra emails notified by AWS Budgets"
-  type        = list(string)
-  default     = []
-}
-
-variable "cost_anomaly_threshold_usd" {
-  description = "Minimum cost anomaly (USD) that sends a P3 alert"
-  type        = number
-  default     = 100
 }

@@ -1,0 +1,93 @@
+{#-
+  Jinja2 template of the Grafana provisioning file for the CloudWatch data sources. Same data sources, same uids
+  as provisioning/cloudwatch.yaml and the Terraform in this folder: use ONE of the three for a given uid.
+
+  Render it with Ansible (ansible.builtin.template) onto the Grafana server:
+    dest: /etc/grafana/provisioning/datasources/cloudwatch.yaml
+  then reload:  POST /api/admin/provisioning/datasources/reload   (or restart Grafana).
+  Example variables: cloudwatch.vars.example.yml. Nothing secret is rendered here.
+
+  Variables:
+    grafana_cw_auth_type            default | credentials | keys   (default: default = AWS SDK Default)
+    grafana_cw_profile              credentials-file profile, only for authType credentials
+    grafana_cw_default_region       default region of the data sources
+    grafana_cw_management           the data source of the chosen route (the one account):
+      .enabled (bool)  .name  .uid  .default_region
+      .assume_role_arn   leave empty/omit with the Managed Identity federation (AWS_ROLE_ARN env var of the
+                         Grafana service): the data source then assumes nothing itself
+    grafana_cw_customers            optional, alternative route: one data source per customer account, list of
+      { name, account_id, environment, region, uid (optional), role_arn (optional) }
+      role_arn defaults to arn:aws:iam::<account_id>:role/<environment>-monitoring-grafana-read
+    grafana_cw_delete               optional, list of NAMES to remove from Grafana (renamed or retired data
+                                    sources; Grafana deletes by name, not by uid)
+    grafana_cw_default_datasource   optional, uid of the data source marked as default
+-#}
+# Managed by Ansible (template cloudwatch.yaml.j2): changes made in the Grafana UI are not kept.
+apiVersion: 1
+
+{% set mgmt = grafana_cw_management | default({}) %}
+{% set customers = grafana_cw_customers | default([]) %}
+{% set auth_type = grafana_cw_auth_type | default('default') %}
+{% set default_region = grafana_cw_default_region | default('ap-southeast-2') %}
+{% set default_uid = grafana_cw_default_datasource | default('') %}
+{% if grafana_cw_delete | default([]) | length > 0 %}
+deleteDatasources:
+{% for old_name in grafana_cw_delete %}
+  - name: {{ old_name | to_json }}
+    orgId: 1
+{% endfor %}
+
+{% endif %}
+{% if (mgmt.enabled | default(false)) or customers | length > 0 %}
+datasources:
+{% if mgmt.enabled | default(false) %}
+  # The one account (monitoring and every customer). Panels pick the customer by tag.
+  - name: {{ mgmt.name | default('CloudWatch - management account') | to_json }}
+    uid: {{ mgmt.uid | default('lighthouse-cw-management') }}
+    type: cloudwatch
+    access: proxy
+    orgId: 1
+    isDefault: {{ (default_uid == (mgmt.uid | default('lighthouse-cw-management'))) | to_json }}
+    editable: false
+    jsonData:
+      authType: {{ auth_type }}
+{% if auth_type == 'credentials' and grafana_cw_profile is defined %}
+      profile: {{ grafana_cw_profile }}
+{% endif %}
+{% if mgmt.assume_role_arn | default('') | length > 0 %}
+      assumeRoleArn: {{ mgmt.assume_role_arn }}
+{% endif %}
+      defaultRegion: {{ mgmt.default_region | default(default_region) }}
+{% if auth_type == 'keys' %}
+    secureJsonData:
+      accessKey: "{{ grafana_cw_access_key }}"
+      secretKey: "{{ grafana_cw_secret_key }}"
+{% endif %}
+
+{% endif %}
+{% for c in customers %}
+  # Customer {{ c.name }} (alternative route: its own data source, assumes the customer's read-only role)
+  - name: {{ c.name | to_json }}
+    uid: {{ c.uid | default('lighthouse-cw-' ~ c.name) }}
+    type: cloudwatch
+    access: proxy
+    orgId: 1
+    isDefault: {{ (default_uid == (c.uid | default('lighthouse-cw-' ~ c.name))) | to_json }}
+    editable: false
+    jsonData:
+      authType: {{ auth_type }}
+{% if auth_type == 'credentials' and grafana_cw_profile is defined %}
+      profile: {{ grafana_cw_profile }}
+{% endif %}
+      assumeRoleArn: {{ c.role_arn | default('arn:aws:iam::' ~ c.account_id ~ ':role/' ~ c.environment ~ '-monitoring-grafana-read') }}
+      defaultRegion: {{ c.region | default(default_region) }}
+{% if auth_type == 'keys' %}
+    secureJsonData:
+      accessKey: "{{ grafana_cw_access_key }}"
+      secretKey: "{{ grafana_cw_secret_key }}"
+{% endif %}
+
+{% endfor %}
+{% else %}
+datasources: []
+{% endif %}

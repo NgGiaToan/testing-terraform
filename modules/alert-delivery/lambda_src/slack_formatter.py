@@ -2,6 +2,7 @@ import json
 import os
 import re
 from datetime import datetime, timezone
+from typing import Any
 
 import boto3
 import urllib3
@@ -24,7 +25,12 @@ OK_COLOR = "#2eb67d"
 _webhooks = None
 
 
-def _get_webhooks():
+def _get_webhooks() -> dict[str, str]:
+    """Team -> webhook URL, cached per container.
+
+    Raises if the secret is not a JSON object with a URL for every team (no fallback to
+    another channel). Errors name the missing team and never include the secret's content.
+    """
     global _webhooks
     if _webhooks is None:
         raw = secrets_client.get_secret_value(SecretId=SLACK_WEBHOOK_SECRET_ARN)["SecretString"]
@@ -42,18 +48,19 @@ def _get_webhooks():
 
 
 def _priority_from_topic(topic_arn: str) -> str:
-    """Priority ("P1", "P2" or "P3") from the SNS topic ARN's `-alerts-p<n>` suffix; "P3" if absent."""
+    """Priority (P1/P2/P3) from the topic ARN's `-alerts-p<n>` suffix; P3 if absent."""
     match = re.search(r"-alerts-(p[123])$", topic_arn.rsplit(":", 1)[-1])
     return match.group(1).upper() if match else "P3"
 
 
-def _region_from_arn(arn):
+def _region_from_arn(arn: str | None) -> str:
+    """Region field of an ARN (the fourth `:`-separated part); "n/a" if missing or empty."""
     parts = (arn or "").split(":")
     return parts[3] if len(parts) > 3 and parts[3] else "n/a"
 
 
-def _parse_description(raw):
-    """The alarm description is JSON written by Terraform; tolerate a plain-text one."""
+def _parse_description(raw: str | None) -> dict[str, Any]:
+    """Parse the Terraform-written JSON description; {} if it is plain text or not an object."""
     try:
         parsed = json.loads(raw or "")
         return parsed if isinstance(parsed, dict) else {}
@@ -61,7 +68,12 @@ def _parse_description(raw):
         return {}
 
 
-def _alarm_alert(message, topic_arn):
+def _alarm_alert(message: dict[str, Any], topic_arn: str) -> dict[str, Any]:
+    """Build the Slack alert for a CloudWatch alarm.
+
+    Metadata comes from the alarm's JSON description (priority falls back to the topic ARN).
+    State OK is titled RESOLVED and shown green.
+    """
     meta = _parse_description(message.get("AlarmDescription"))
     state = message.get("NewStateValue", "UNKNOWN")
     priority = meta.get("priority") or _priority_from_topic(topic_arn)
@@ -92,7 +104,11 @@ def _alarm_alert(message, topic_arn):
     }
 
 
-def _generic_alert(subject, body, topic_arn):
+def _generic_alert(subject: str | None, body: str, topic_arn: str) -> dict[str, Any]:
+    """Build the Slack alert for a free-text notification (AWS Budgets, Cost Anomaly Detection).
+
+    Always addressed to the Operations team; the priority comes from the topic ARN.
+    """
     priority = _priority_from_topic(topic_arn)
     style = PRIORITY_STYLE[priority]
     return {
@@ -103,7 +119,8 @@ def _generic_alert(subject, body, topic_arn):
     }
 
 
-def _build_alert(sns):
+def _build_alert(sns: dict[str, Any]) -> dict[str, Any]:
+    """Alarm alert if the SNS message is a CloudWatch alarm, else a generic one from the free text."""
     topic_arn = sns["TopicArn"]
     raw = sns["Message"]
     try:
@@ -115,7 +132,8 @@ def _build_alert(sns):
     return _generic_alert(sns.get("Subject"), raw, topic_arn)
 
 
-def _post_to_slack(webhook_url, alert):
+def _post_to_slack(webhook_url: str, alert: dict[str, Any]) -> None:
+    """Post the alert to one Slack webhook; raise RuntimeError if Slack does not answer 200."""
     body = {
         "text": alert["title"],
         "attachments": [{"color": alert["color"], "title": alert["title"], "text": alert["text"], "mrkdwn_in": ["text"]}],
@@ -127,32 +145,36 @@ def _post_to_slack(webhook_url, alert):
         headers={"Content-Type": "application/json; charset=utf-8"},
     )
     response_text = resp.data.decode("utf-8", errors="replace")
-    # Logged for every post: the alert title, Slack's status code and its reply ("ok", or an
-    # error such as "no_service" or "invalid_payload"). The webhook URL is never logged.
+    # Log every post (title, status, Slack's reply); never the webhook URL.
     print({"alert": alert["title"], "status_code": resp.status, "response": response_text})
-    # urllib3 does not raise on 4xx/5xx, so check the status. Slack answers 200 "ok" on success.
+    # urllib3 doesn't raise on 4xx/5xx; Slack returns 200 "ok" on success.
     if resp.status != 200:
         raise RuntimeError(f"Slack returned {resp.status}: {response_text}")
 
 
-def _redact(text, webhook_url):
+def _redact(text: str, webhook_url: str) -> str:
+    """Mask the webhook URL, and its secret path alone, in `text` so the credential is never logged."""
     secret_path = urllib3.util.parse_url(webhook_url).path
     text = text.replace(webhook_url, "<webhook>")
     return text.replace(secret_path, "<path>") if secret_path else text
 
 
-def handler(event, _context):
+def handler(event: dict[str, Any], _context: object) -> None:
+    """Lambda entry point: post each SNS record to the webhook of every team it addresses.
+
+    A failed post doesn't stop the rest; one RuntimeError is raised at the end so the
+    `lambda-errors` alarm fires.
+    """
     failures = []
     webhooks = _get_webhooks()
     for record in event["Records"]:
         alert = _build_alert(record["Sns"])
-        # A set, so an alert addressed to two teams that share a webhook posts once.
+        # Set: teams sharing a webhook get one post.
         urls = {webhooks.get(team) for team in alert["teams"]} - {None, ""}
         for url in sorted(urls):
             try:
                 _post_to_slack(url, alert)
-            except Exception as exc:  # keep going so one bad webhook doesn't drop the others
-                # The URL is the credential: redact it from the error before it is kept.
+            except Exception as exc:  # one bad webhook must not drop the others
                 failures.append(f"Slack webhook post failed: {type(exc).__name__}: {_redact(str(exc), url)}")
     if failures:
         raise RuntimeError("; ".join(failures))

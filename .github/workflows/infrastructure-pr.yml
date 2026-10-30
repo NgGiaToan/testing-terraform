@@ -9,6 +9,11 @@ name: Infrastructure - PR
 # with no required reviewers, used only to scope which AWS role/secrets it gets. Only
 # TempStaging's apply job points at the real `tempstaging` environment. This split is what
 # lets plan assume credentials without being gated by an approval it's supposed to inform.
+#
+# TempStaging's apply-tempstaging/destroy-tempstaging jobs assume github-actions-non-prod,
+# not github-actions-apply — that role is main-branch-only. The non-prod role instead
+# carries a TempStaging-scoped write carve-out (environment/shr-iam/github_actions.tf) so
+# the one role can plan AND apply/destroy TempStaging from a PR.
 on:
   pull_request:
     branches: [main]
@@ -38,9 +43,9 @@ jobs:
 
   # --- Shared account infra (shr-bootstrap, shr-iam) — plan only. Apply is manual by an
   # admin (shr-bootstrap creates the state bucket/lock table, shr-iam creates the OIDC
-  # provider + the plan/apply roles themselves, so neither can safely auto-apply from CI),
-  # but plan can run here since the plan role these jobs assume already exists once
-  # shr-iam has been applied at least once. ---
+  # provider + the non-prod/apply roles themselves, so neither can safely auto-apply from
+  # CI), but plan can run here since the non-prod role these jobs assume already exists
+  # once shr-iam has been applied at least once. ---
   plan-shr:
     if: github.event.action != 'closed'
     needs: [lint-snyk]
@@ -76,7 +81,7 @@ jobs:
         with:
           working-directory: environment/${{ matrix.tf_env_shr }}
           env-name: ${{ matrix.tf_env_shr }}
-          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-non-prod
           infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
           pr-number: ${{ github.event.pull_request.number }}
 
@@ -114,14 +119,14 @@ jobs:
         with:
           working-directory: environment/${{ matrix.tf_env }}
           env-name: staging-${{ matrix.tf_env }}
-          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-non-prod
           infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
           pr-number: ${{ github.event.pull_request.number }}
 
   # --- Prod: per-customer production. Customers are data, not directories in this repo —
-  # the list is discovered from SSM Parameter Store (/oglh/customers/<code>), and every
-  # customer plans on every PR against the single shared environment/prd-customer
-  # module, parameterized by customer_code. ---
+  # the list is discovered from Secrets Manager (one secret per customer, named
+  # oglh/customers/<code>), and every customer plans on every PR against the single
+  # shared environment/prd-customer module, parameterized by customer_code. ---
   discover-customers:
     if: github.event.action != 'closed'
     runs-on: ubuntu-latest
@@ -134,14 +139,14 @@ jobs:
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-non-prod
           aws-region: us-east-1
 
-      - name: List customer codes from SSM (/oglh/customers/<code>)
+      - name: List customer codes from Secrets Manager (oglh/customers/<code>)
         id: list
         run: |
-          customers=$(aws ssm get-parameters-by-path --path "/oglh/customers" --output json \
-            | jq -r '.Parameters[].Name | split("/") | last' \
+          customers=$(aws secretsmanager list-secrets --filter Key=name,Values="oglh/customers/" --output json \
+            | jq -r '.SecretList[].Name | select(startswith("oglh/customers/")) | split("/") | last' \
             | sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')
           echo "customers=$customers" >> "$GITHUB_OUTPUT"
 
@@ -176,15 +181,35 @@ jobs:
               - '.github/workflows/**'
               - '.github/actions/**'
 
+      - name: Configure AWS credentials via OIDC
+        if: steps.filter.outputs.changed == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-non-prod
+          aws-region: us-east-1
+
+      # Region is data on the customer's secret (oglh/customers/<code>), same source as
+      # customer_code. Falls back to us-east-1 for secrets not yet migrated to carry a
+      # region field — see Multiple-Region-Setup-Detail.md Step 2, sub-step 4.
+      - name: Read region for this customer
+        id: region
+        if: steps.filter.outputs.changed == 'true'
+        run: |
+          region=$(aws secretsmanager get-secret-value \
+            --secret-id "oglh/customers/${{ matrix.customer }}" \
+            --query 'SecretString' --output text | jq -r '.region // "us-east-1"')
+          echo "region=$region" >> "$GITHUB_OUTPUT"
+
       - if: steps.filter.outputs.changed == 'true'
         uses: ./.github/actions/terraform-plan-cost
         with:
           working-directory: environment/prd-customer
           env-name: prod-${{ matrix.customer }}
-          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-non-prod
           infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
           pr-number: ${{ github.event.pull_request.number }}
           backend-config: key=oglh/customers/${{ matrix.customer }}/terraform.tfstate
+          region: ${{ steps.region.outputs.region }}
 
   # --- Prod: Global (bootstrap + admin — fixed set, not discovered) ---
   plan-prod-global:
@@ -220,13 +245,14 @@ jobs:
         with:
           working-directory: environment/${{ matrix.tf_env_prod }}
           env-name: prod-${{ matrix.tf_env_prod }}
-          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-non-prod
           infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
           pr-number: ${{ github.event.pull_request.number }}
 
-  # --- Staging: Demo/Testing. These envs are data too — the list is discovered from SSM
-  # Parameter Store (/envs/stg_*), and every env plans against the single shared
-  # environment/stg-customer module, parameterized by env_name. ---
+  # --- Staging: Demo/Testing. These envs are data too — the list is discovered from
+  # Secrets Manager (one secret per env, named oglh/stg/<name>), and every env plans
+  # against the single shared environment/stg-customer module, parameterized by
+  # env_name. ---
   discover-demo-envs:
     if: github.event.action != 'closed'
     runs-on: ubuntu-latest
@@ -239,15 +265,14 @@ jobs:
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-non-prod
           aws-region: us-east-1
 
-      - name: List stg_* env names from SSM (/envs/stg_*)
+      - name: List env names from Secrets Manager (oglh/stg/<name>)
         id: list
         run: |
-          envs=$(aws ssm get-parameters-by-path --path "/envs" --output json \
-            | jq -r '.Parameters[].Name | split("/") | last' \
-            | grep '^stg_' \
+          envs=$(aws secretsmanager list-secrets --filter Key=name,Values="oglh/stg/" --output json \
+            | jq -r '.SecretList[].Name | select(startswith("oglh/stg/")) | split("/") | last' \
             | sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')
           echo "envs=$envs" >> "$GITHUB_OUTPUT"
 
@@ -291,7 +316,7 @@ jobs:
         with:
           working-directory: environment/stg-customer
           env-name: staging-${{ matrix.tf_cus }}
-          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-non-prod
           infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
           pr-number: ${{ github.event.pull_request.number }}
           backend-config: key=envs/${{ matrix.tf_cus }}/terraform.tfstate
@@ -337,11 +362,17 @@ jobs:
         with:
           working-directory: environment/tempstaging
           env-name: tempstaging
-          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-plan
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-non-prod
           infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
           pr-number: ${{ github.event.pull_request.number }}
           backend-config: key=tempstaging/pr-${{ github.event.pull_request.number }}/terraform.tfstate
 
+  # This and destroy-tempstaging below assume github-actions-non-prod, not
+  # github-actions-apply — that role is main-branch-only (its trust policy requires
+  # `ref = refs/heads/main` unconditionally, so a pull_request-triggered run can never
+  # assume it). The non-prod role carries a TempStaging-scoped write carve-out instead
+  # (see the TempStaging* statements on non_prod_access in environment/shr-iam/
+  # github_actions.tf), which is what makes apply/destroy from a PR possible here at all.
   apply-tempstaging:
     needs: [plan-tempstaging]
     if: needs.plan-tempstaging.outputs.changed == 'true'
@@ -353,6 +384,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      pull-requests: write
     env:
       TF_VAR_pr_number: ${{ github.event.pull_request.number }}
     steps:
@@ -361,15 +393,14 @@ jobs:
         with:
           working-directory: environment/tempstaging
           env-name: tempstaging
-          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-apply
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-non-prod
           backend-config: key=tempstaging/pr-${{ github.event.pull_request.number }}/terraform.tfstate
           run-ansible: "true"
+          pr-number: ${{ github.event.pull_request.number }}
 
-  # --- PR closed without merging: tear TempStaging back down. A merged PR's TempStaging
-  # is deliberately left as-is (no destroy) — only an abandoned PR's ephemeral env is torn
-  # down here. ---
+  # --- PR closed (merged or abandoned): tear TempStaging back down either way. ---
   destroy-tempstaging:
-    if: github.event.action == 'closed' && github.event.pull_request.merged == false
+    if: github.event.action == 'closed'
     runs-on: ubuntu-latest
     environment: tempstaging
     concurrency:
@@ -379,33 +410,96 @@ jobs:
       contents: read
       id-token: write
       pull-requests: write
+    env:
+      TF_VAR_pr_number: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/terraform-destroy
+        with:
+          working-directory: environment/tempstaging
+          env-name: tempstaging
+          role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-non-prod
+          backend-config: key=tempstaging/pr-${{ github.event.pull_request.number }}/terraform.tfstate
+          pr-number: ${{ github.event.pull_request.number }}
+
+  # --- Final summary: one Slack message per PR run, built from the result of every
+  # scan/plan/apply/destroy job above. `if: always()` so it still fires (and reports the
+  # failure) even if an earlier job failed; a job skipped by its own `if:` (e.g. every plan
+  # job on a `closed` PR event) shows up as "skipped", not as a false failure. ---
+  notify:
+    if: always() && !cancelled()
+    needs:
+      - lint-snyk
+      - plan-shr
+      - plan-staging-global
+      - plan-prod-customers
+      - plan-prod-global
+      - plan-staging-demo
+      - plan-tempstaging
+      - apply-tempstaging
+      - destroy-tempstaging
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials via OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Build summary
+        id: summary
+        shell: bash
+        run: |
+          lint_snyk="${{ needs.lint-snyk.result }}"
+          plan_shr="${{ needs.plan-shr.result }}"
+          plan_staging_global="${{ needs.plan-staging-global.result }}"
+          plan_staging_demo="${{ needs.plan-staging-demo.result }}"
+          plan_prod_global="${{ needs.plan-prod-global.result }}"
+          plan_prod_customers="${{ needs.plan-prod-customers.result }}"
+          plan_tempstaging="${{ needs.plan-tempstaging.result }}"
+          apply_tempstaging="${{ needs.apply-tempstaging.result }}"
+          destroy_tempstaging="${{ needs.destroy-tempstaging.result }}"
+
+          results=("$lint_snyk" "$plan_shr" "$plan_staging_global" "$plan_staging_demo" "$plan_prod_global" "$plan_prod_customers" "$plan_tempstaging" "$apply_tempstaging" "$destroy_tempstaging")
+          all_skipped=true
+          for r in "${results[@]}"; do
+            [ "$r" = "skipped" ] || all_skipped=false
+          done
+
+          if [ "$apply_tempstaging" = "failure" ]; then
+            headline="❌ Apply TempStaging failed"; color="danger"
+          elif [ "$destroy_tempstaging" = "failure" ]; then
+            headline="❌ Destroy TempStaging failed"; color="danger"
+          elif [ "$plan_tempstaging" = "failure" ]; then
+            headline="❌ Plan TempStaging failed"; color="danger"
+          elif [ "$plan_prod_global" = "failure" ]; then
+            headline="❌ Plan Prod Global failed"; color="danger"
+          elif [ "$plan_prod_customers" = "failure" ]; then
+            headline="❌ Plan Prod Customers failed"; color="danger"
+          elif [ "$plan_staging_global" = "failure" ]; then
+            headline="❌ Plan Staging Global failed"; color="danger"
+          elif [ "$plan_staging_demo" = "failure" ]; then
+            headline="❌ Plan Staging Demo failed"; color="danger"
+          elif [ "$plan_shr" = "failure" ]; then
+            headline="❌ Plan Shared failed"; color="danger"
+          elif [ "$lint_snyk" = "failure" ]; then
+            headline="❌ Lint/Snyk scan failed"; color="danger"
+          elif [ "$all_skipped" = true ]; then
+            headline="⏭️ All stages skipped"; color="#808080"
+          elif [ "$apply_tempstaging" = "skipped" ]; then
+            headline="⏭️ Apply TempStaging skipped (no TempStaging changes)"; color="good"
+          else
+            headline="✅ All stages passed"; color="good"
+          fi
+          echo "color=$color" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "text<<EOF"
+            echo "$headline"
+            echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/notify-slack
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform-apply
-          aws-region: us-east-1
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Terraform Init
-        working-directory: environment/tempstaging
-        run: terraform init -backend-config="key=tempstaging/pr-${{ github.event.pull_request.number }}/terraform.tfstate"
-
-      - name: Terraform Destroy
-        working-directory: environment/tempstaging
-        run: terraform destroy -no-color -auto-approve -var="pr_number=${{ github.event.pull_request.number }}"
-
-      - name: Comment on PR
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: "✅ TempStaging destroyed (PR closed without merging)."
-            });
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          title: "Infrastructure PR #${{ github.event.pull_request.number }} — ${{ github.event.pull_request.title }}"
+          title-link: ${{ github.event.pull_request.html_url }}
+          summary: ${{ steps.summary.outputs.text }}
+          color: ${{ steps.summary.outputs.color }}

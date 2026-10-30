@@ -1,5 +1,5 @@
 name: "Terraform Plan + Cost"
-description: "Assume the plan role, run terraform fmt/init/validate/plan, publish its JSON and raw plan as artifacts, compute its Infracost estimate, and publish both to a PR comment or the job summary"
+description: "Assume the non-prod role, run terraform init/plan (fmt/validate now run once for every environment in terraform-lint), publish its JSON and raw plan as artifacts, compute its Infracost estimate, and publish both to a PR comment or the job summary"
 
 inputs:
   working-directory:
@@ -9,12 +9,16 @@ inputs:
     description: "Environment name (e.g. staging-stg_admin), used in artifact names, comments, and the job summary"
     required: true
   role-arn:
-    description: "ARN of the read-only plan role to assume via OIDC"
+    description: "ARN of the read-only non-prod role to assume via OIDC"
     required: true
   infracost-api-key:
     required: true
   backend-config:
     description: "Passed to `terraform init -backend-config=...`, for backends that need a run-time value (e.g. TempStaging's per-PR state key, which can't be a literal in the backend block)"
+    required: false
+    default: ""
+  region:
+    description: "AWS region to pass as -var=\"region=...\" to terraform plan, for modules with a region variable"
     required: false
     default: ""
   pr-number:
@@ -23,10 +27,14 @@ inputs:
     default: ""
 
 outputs:
-  fmt-outcome:
-    value: ${{ steps.fmt.outcome }}
   plan-outcome:
     value: ${{ steps.plan.outcome }}
+  monthly-cost:
+    value: ${{ steps.cost.outputs.monthly }}
+  base-cost:
+    value: ${{ steps.cost.outputs.base }}
+  diff-cost:
+    value: ${{ steps.cost.outputs.diff }}
 
 runs:
   using: "composite"
@@ -40,13 +48,9 @@ runs:
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
 
-    - name: Terraform Format Check
-      id: fmt
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: terraform fmt -check -recursive
-      continue-on-error: true
-
+    # fmt/validate for this environment already ran once in terraform-lint (job needs:
+    # this workflow's lint-snyk), before any AWS role was assumed — no need to repeat
+    # them per plan leg.
     - name: Terraform Init
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -57,16 +61,16 @@ runs:
           terraform init
         fi
 
-    - name: Terraform Validate
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: terraform validate -no-color
-
     - name: Terraform Plan
       id: plan
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: terraform plan -no-color -out=tfplan
+      run: |
+        if [ -n "${{ inputs.region }}" ]; then
+          terraform plan -no-color -var="region=${{ inputs.region }}" -out=tfplan
+        else
+          terraform plan -no-color -out=tfplan
+        fi
       continue-on-error: true
 
     - name: Terraform Show (JSON, for formatting/summary)
@@ -137,20 +141,91 @@ runs:
           echo "EOF"
         } >> "$GITHUB_OUTPUT"
 
-    # TODO: re-enable once the plan/plan-cost work is done — Infracost is disabled for
-    # now, so "Comment cost on PR" and the Infracost section of the job summary below are
-    # disabled too (both need infracost.json, which this step produces).
+    # continue-on-error on both: a Infracost outage (bad key, rate limit, API down) must
+    # never block the actual Terraform plan comment or the fail-if-plan-failed gate below —
+    # cost is supplementary information, not a release gate.
     - name: Setup Infracost
-      if: false
+      id: infracost-setup
+      continue-on-error: true
       uses: infracost/actions/setup@v3
       with:
         api-key: ${{ inputs.infracost-api-key }}
 
-    - name: Generate Infracost cost estimate
-      if: false
+    # `diff` (not `breakdown`) so the report shows the base cost (from the plan's prior
+    # state) alongside the cost after this change, not just the resulting total — still
+    # reading tfplan.json (plan state), not re-deriving cost from the Terraform code itself.
+    - name: Generate Infracost cost diff
+      if: steps.infracost-setup.outcome == 'success'
+      continue-on-error: true
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: infracost breakdown --path=tfplan.json --format=json --out-file=infracost.json
+      run: infracost diff --path=tfplan.json --format=json --out-file=infracost.json
+
+    # Cost is per-environment and this job is often one leg of a matrix, so its result
+    # can't reach a downstream job via a normal job `output` (GitHub only keeps the last
+    # matrix leg's outputs, silently dropping the rest). Publishing it as its own artifact
+    # instead lets the pipeline's final Slack summary download every leg's status.json and
+    # rebuild the full per-environment table, no matter how many legs or customers ran.
+    - name: Extract monthly cost
+      id: cost
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if [ -f infracost.json ]; then
+          base=$(jq -r '.pastTotalMonthlyCost // "N/A"' infracost.json)
+          monthly=$(jq -r '.totalMonthlyCost // "N/A"' infracost.json)
+          diff=$(jq -r '.diffTotalMonthlyCost // "N/A"' infracost.json)
+        else
+          base="N/A"
+          monthly="N/A"
+          diff="N/A"
+        fi
+        echo "base=$base" >> "$GITHUB_OUTPUT"
+        echo "monthly=$monthly" >> "$GITHUB_OUTPUT"
+        echo "diff=$diff" >> "$GITHUB_OUTPUT"
+
+    # base.md: hand-rolled table from the plan's prior-state resources (infracost has no
+    # command to render a past-only breakdown on its own). diff.md: infracost's own
+    # github-comment renderer, the same one `infracost comment github` uses internally —
+    # both read from the single infracost.json produced above, no extra terraform/infracost run.
+    - name: Generate base + diff cost reports
+      if: steps.infracost-setup.outcome == 'success'
+      continue-on-error: true
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if [ -f infracost.json ]; then
+          {
+            echo "**Current cost (base): \`${{ steps.cost.outputs.base }}\`/mo**"
+            echo
+            echo "| Resource | Monthly Cost |"
+            echo "|---|---|"
+            jq -r '.projects[0].pastBreakdown.resources[]? | "| `\(.name)` | \(.monthlyCost // "0") |"' infracost.json
+          } > base.md
+          infracost output --path=infracost.json --format=github-comment --out-file=diff.md
+        else
+          echo "No cost estimate available for this run." > base.md
+          echo "" > diff.md
+        fi
+
+    - name: Write plan/cost status for notify summary
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        jq -n \
+          --arg env "${{ inputs.env-name }}" \
+          --arg plan "${{ steps.plan.outcome }}" \
+          --arg cost "${{ steps.cost.outputs.monthly }}" \
+          --arg base "${{ steps.cost.outputs.base }}" \
+          --arg diff "${{ steps.cost.outputs.diff }}" \
+          '{env: $env, plan: $plan, cost: $cost, base: $base, diff: $diff}' > status.json
+
+    - name: Upload plan/cost status for notify summary
+      uses: actions/upload-artifact@v4
+      with:
+        name: status-${{ inputs.env-name }}
+        path: ${{ inputs.working-directory }}/status.json
+        retention-days: 1
 
     - name: Comment plan on PR
       if: inputs.pr-number != ''
@@ -159,16 +234,22 @@ runs:
         ENV_NAME: ${{ inputs.env-name }}
         PLAN: ${{ steps.show.outputs.stdout }}
         TREE: ${{ steps.tree.outputs.tree }}
-        FMT_OUTCOME: ${{ steps.fmt.outcome }}
         PLAN_OUTCOME: ${{ steps.plan.outcome }}
         PR_NUMBER: ${{ inputs.pr-number }}
+        WORKING_DIRECTORY: ${{ inputs.working-directory }}
       with:
         script: |
+          const fs = require('fs');
+
+          const graphPath = require('path').join(process.env.WORKING_DIRECTORY, 'graph.mmd');
+          const mermaid = fs.existsSync(graphPath)
+            ? `\`\`\`mermaid\n${fs.readFileSync(graphPath, 'utf8')}\`\`\`\n\n`
+            : '';
+
           const output = `### Terraform Plan — ${process.env.ENV_NAME}
-          #### Terraform Format: \`${process.env.FMT_OUTCOME}\`
           #### Terraform Plan: \`${process.env.PLAN_OUTCOME}\`
 
-          \`\`\`
+          ${mermaid}\`\`\`
           ${process.env.TREE}
           \`\`\`
 
@@ -188,15 +269,53 @@ runs:
           });
 
     - name: Comment cost on PR
-      if: false && inputs.pr-number != ''
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: |
-        infracost comment github --path=infracost.json \
-          --repo=$GITHUB_REPOSITORY \
-          --pull-request=${{ inputs.pr-number }} \
-          --tag=${{ inputs.env-name }} \
-          --behavior=update
+      if: inputs.pr-number != ''
+      continue-on-error: true
+      uses: actions/github-script@v7
+      env:
+        ENV_NAME: ${{ inputs.env-name }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        WORKING_DIRECTORY: ${{ inputs.working-directory }}
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+
+          const readOr = (name, fallback) => {
+            const p = path.join(process.env.WORKING_DIRECTORY, name);
+            return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : fallback;
+          };
+          const base = readOr('base.md', 'No cost estimate available for this run.');
+          const diff = readOr('diff.md', '');
+
+          // Marker identifies this environment's comment so re-runs update it in place
+          // instead of piling up a new comment per push, same intent as the old
+          // `infracost comment github --behavior=update --tag=<env-name>`.
+          const marker = `<!-- infracost-comment:${process.env.ENV_NAME} -->`;
+          const body = `${marker}\n### Infracost — ${process.env.ENV_NAME}\n\n<details><summary>Current cost (base)</summary>\n\n${base}\n\n</details>\n\n${diff}`;
+
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: Number(process.env.PR_NUMBER),
+          });
+          const existing = comments.find(c => c.body.includes(marker));
+
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existing.id,
+              body,
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number(process.env.PR_NUMBER),
+              body,
+            });
+          }
 
     - name: Publish plan + cost to job summary
       if: inputs.pr-number == ''
@@ -205,22 +324,34 @@ runs:
       run: |
         {
           echo "### Terraform Plan — ${{ inputs.env-name }}"
-          echo "Format: \`${{ steps.fmt.outcome }}\` — Plan: \`${{ steps.plan.outcome }}\`"
+          echo "Plan: \`${{ steps.plan.outcome }}\`"
           echo
+          if [ -f graph.mmd ]; then
+            echo '```mermaid'
+            cat graph.mmd
+            echo '```'
+            echo
+          fi
           echo '```'
           cat <<'TREE'
         ${{ steps.tree.outputs.tree }}
         TREE
           echo '```'
-          # echo
-          # echo "### Infracost — ${{ inputs.env-name }}"
-          # echo
-          # echo '```'
-          # infracost output --path=infracost.json --format=table
-          # echo '```'
+          echo
+          echo "### Infracost — ${{ inputs.env-name }}"
+          echo
+          echo "Base: \`${{ steps.cost.outputs.base }}\`/mo → New: \`${{ steps.cost.outputs.monthly }}\`/mo (Δ \`${{ steps.cost.outputs.diff }}\`/mo)"
+          echo
+          echo '```'
+          if [ -f infracost.json ]; then
+            infracost output --path=infracost.json --format=table
+          else
+            echo "Infracost estimate unavailable for this run"
+          fi
+          echo '```'
         } >> "$GITHUB_STEP_SUMMARY"
 
-    - name: Fail if plan or format failed
-      if: steps.fmt.outcome == 'failure' || steps.plan.outcome == 'failure'
+    - name: Fail if plan failed
+      if: steps.plan.outcome == 'failure'
       shell: bash
       run: exit 1

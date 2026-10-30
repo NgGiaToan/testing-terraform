@@ -3,14 +3,11 @@
 # instance), plus the agent's config: memory and per-mount-point disk usage. CPU and
 # network come from the hypervisor-level AWS/EC2 namespace and need no agent.
 
-data "aws_iam_role" "existing_ec2" {
-  count = local.instance_enabled ? 1 : 0
-  name  = var.existing_ec2_role_name
-}
-
+# The role name is used as given, with no lookup at plan time, so the role can be created in
+# the same apply (a lookup would fail at plan while the role does not exist yet).
 resource "aws_iam_role_policy_attachment" "cloudwatch_agent" {
   count      = local.instance_enabled ? 1 : 0
-  role       = data.aws_iam_role.existing_ec2[0].name
+  role       = var.existing_ec2_role_name
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
 }
 

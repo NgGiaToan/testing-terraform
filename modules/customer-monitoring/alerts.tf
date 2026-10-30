@@ -3,9 +3,9 @@
 # the audience and the wording of the trigger live in exactly one place. The `condition`
 # text is built from the same variables as the alarm itself, so it cannot drift from it.
 #
-# Alarm name:        <customer>-<priority>-<alert-key>   e.g. acme-P1-https-canary
-# Alarm description: JSON read by the formatter Lambda (modules/alert-formatter) —
-#                    priority, customer, alert_type, service, condition, dashboard_url, and
+# Alarm name:        <customer>-<priority>-<alert environment>-<alert-key>   e.g. acme-P1-prd-https-canary
+# Alarm description: JSON read by the alert delivery Lambda (modules/alert-delivery) —
+#                    priority, customer, environment (dev/stg/prd), alert_type, service, condition, dashboard_url, and
 #                    `notify` (the teams that receive it: Operations and/or Engineering).
 
 locals {
@@ -107,30 +107,30 @@ locals {
       priority  = "P1", notify = ["Engineering"], service = "Backup", alert_type = "SnapshotSucceeded"
       condition = "No successful daily AMI snapshot for 25 hours"
     }
-    "sns-failures" = {
-      priority  = "P2", notify = ["Engineering"], service = "SNS", alert_type = "NumberOfNotificationsFailed"
-      condition = "SNS could not deliver an alert notification to the formatter Lambda"
-    }
   }
 
+  # The alert environment (dev, stg, prd, or the full name) is in the name so that two environments
+  # of one customer in the same account and region do not overwrite each other's alarms.
   alarm_names = {
-    for key, a in local.alerts : key => "${var.customer_code}-${a.priority}-${key}"
+    for key, a in local.alerts : key => "${var.customer_code}-${a.priority}-${local.alert_environment}-${key}"
   }
 
   alarm_descriptions = {
     for key, a in local.alerts : key => jsonencode({
       priority      = a.priority
       customer      = var.customer_code
+      environment   = var.environment
       alert_type    = a.alert_type
       service       = a.service
       condition     = a.condition
-      dashboard_url = coalesce(var.dashboard_url, "")
+      dashboard_url = var.dashboard_url == null ? "" : var.dashboard_url # not coalesce(): it skips ""
       notify        = a.notify
     })
   }
 
-  # alarm_actions and ok_actions publish to the priority topic in this account and region.
+  # alarm_actions and ok_actions publish to the priority topic in the management account, in
+  # this region (sns.tf). With no topics configured, the alarms have no notification actions.
   alarm_actions = {
-    for key, a in local.alerts : key => [aws_sns_topic.alerts[a.priority].arn]
+    for key, a in local.alerts : key => contains(keys(local.central_alert_topic_arns), a.priority) ? [local.central_alert_topic_arns[a.priority]] : []
   }
 }

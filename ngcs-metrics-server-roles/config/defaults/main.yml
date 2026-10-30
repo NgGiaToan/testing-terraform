@@ -12,7 +12,7 @@
 # A uid that already exists in Grafana must be passed unchanged, or Grafana creates a second datasource and
 # prune: true deletes the old one. New uid: tr -dc A-Z0-9 </dev/urandom | head -c 17; echo
 
-# AWS CloudWatch (cross-account observability, AWS SDK Default)
+# AWS CloudWatch (one account, AWS SDK Default)
 cloudwatch_enabled: true
 cloudwatch_uid: lighthouse-cw-management
 # Leave empty with the Managed Identity federation (AWS_ROLE_ARN comes from the service environment).
@@ -27,6 +27,12 @@ aws_token_file: /run/aws-web-identity/token
 # Must stay under the lifetime of the Azure token (expires_in of the metadata answer; Microsoft's sample shows 3599 s,
 # check the real value on your VM). AWS reads the file again at each refresh of its credentials.
 aws_token_refresh: 30min
+
+# Optional check of the token before Grafana is touched. azure_mi_object_id is the object (principal) ID of the
+# Managed Identity, the same value as grafana_azure_subject in the AWS stack: when set, the sub claim must be it.
+# aws_sts_check_enabled calls AWS STS once with the token (needs port 443 to sts.<aws_region>.amazonaws.com).
+azure_mi_object_id: ""
+aws_sts_check_enabled: true
 
 # Where Grafana reads its provisioning files and how to reload / restart it.
 grafana_provisioning_dir: /etc/grafana/provisioning

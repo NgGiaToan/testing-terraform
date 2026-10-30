@@ -35,8 +35,8 @@ datasources:
     version: 1
 
 {% if cloudwatch_enabled | bool %}
-  # AWS CloudWatch of the management account (sink of cross-account observability): it reads every
-  # linked customer account, the dashboards pick the customer with accountId.
+  # AWS CloudWatch of the one account that holds the monitoring and every customer: the dashboards pick
+  # the customer by tag.
   - name: CloudWatch
     type: cloudwatch
     access: proxy

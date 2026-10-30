@@ -187,6 +187,55 @@ Merging to `main` produces a `push` event on `main`, which independently trigger
 
 Deploy is complete once documentation, quality, and every app's Production apply have all finished. Each app's promotion is otherwise independent — one app's failed plan/apply doesn't block another app's chain.
 
+## Snyk & Infracost — detail
+
+This section zooms into two specific steps referenced in the diagrams above: the `lint-snyk` job's Snyk scan, and the Infracost cost estimate inside the `terraform-plan-cost` composite action.
+
+### Snyk (IaC scan)
+
+`lint-snyk` is a single job defined identically in both `infrastructure-pr.yml` and `infrastructure-main.yml`. It runs once per workflow trigger — not once per matrix leg — and every `plan-*` job depends on it via `needs: [lint-snyk, ...]`, so a scan failure blocks every plan/apply leg downstream of it.
+
+```mermaid
+flowchart TD
+    L0(["job: lint-snyk<br/>(runs once per workflow trigger)"]) --> L1["Checkout"]
+    L1 --> L2["terraform-lint action<br/>(tflint)"]
+    L2 --> L3["ansible-lint action"]
+    L3 --> L4["Snyk IaC scan<br/>snyk/actions/iac@master<br/>args: --severity-threshold=medium<br/>env: SNYK_TOKEN"]
+    L4 --> L5(["gates every plan-* job<br/>via needs: [lint-snyk]"])
+```
+
+Notes:
+
+- Severity threshold is `medium` — findings below that don't fail the job.
+- `discover-customers` and `discover-demo-envs` do **not** wait on `lint-snyk` (no `needs:` entry for it), so customer/env discovery from Secrets Manager runs in parallel with the scan; only the `plan-*` jobs that consume both outputs wait on both.
+
+### Infracost (currently disabled)
+
+Infracost is wired into [`.github/actions/terraform-plan-cost/action.yml`](.github/actions/terraform-plan-cost/action.yml) but every Infracost-specific step is gated `if: false`, per the `TODO` comment in that file: *"re-enable once the plan/plan-cost work is done."* The `infracost-api-key` input is still accepted by the action and threaded through from every caller, but goes unused while disabled.
+
+```mermaid
+flowchart TD
+    P0(["terraform-plan-cost composite action<br/>(one call per matrix leg: shr/stg/prd tier,<br/>per-customer, per-demo-env, tempstaging)"]) --> P1["terraform fmt / init / validate / plan"]
+    P1 --> P2["terraform show -json tfplan &gt; tfplan.json"]
+    P2 -->|"upload-artifact"| ART[("tfplan-&lt;env-name&gt; artifact")]
+
+    P2 --> P3{"Infracost setup + breakdown<br/>if: false"}
+    P3 -.->|"skipped"| P3A["Setup Infracost<br/>infracost/actions/setup@v3"]
+    P3 -.->|"skipped"| P3B["infracost breakdown<br/>--path=tfplan.json --out-file=infracost.json"]
+
+    P2 --> P4{"inputs.pr-number set?"}
+    P4 -->|"yes (PR run)"| P5["Comment plan on PR<br/>(plan tree + full plan text)"]
+    P5 -.->|"skipped, if: false"| P5A["infracost comment github<br/>--path=infracost.json --pull-request=&lt;pr#&gt;"]
+    P4 -->|"no (push to main)"| P6["Publish plan to job summary"]
+    P6 -.->|"commented out"| P6A["Infracost table<br/>infracost output --format=table"]
+```
+
+Notes:
+
+- Dotted arrows mark the steps that currently do not run.
+- Because the breakdown step never runs, `infracost.json` is never produced — so even if the PR-comment step's `if:` weren't hardcoded false, there'd be nothing for `infracost comment github` to read. Its actual condition, `if: false && inputs.pr-number != ''`, is skipped unconditionally regardless of `pr-number` since the first operand is a literal `false`.
+- Re-enabling requires flipping the four `if: false` conditions in `terraform-plan-cost/action.yml` (Infracost setup, breakdown, PR comment) and un-commenting the job-summary block's Infracost lines.
+
 ## Required secrets & permissions
 
 | Name | Used by | Purpose |

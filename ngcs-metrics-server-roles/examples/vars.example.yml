@@ -22,10 +22,10 @@ azure_monitor_uid: "<existing uid>"
 
 # --- CloudWatch ---------------------------------------------------------------------------------------------
 cloudwatch_enabled: true
-# The region of the sink: the region where environment/shr-monitoring is deployed (its `region` input).
-# Also readable in the sink ARN: `terraform output oam_sink_arn` -> arn:aws:oam:<region>:<account>:sink/<id>
+# The default region of the data source: the region where environment/shr-monitoring is deployed (its `region`
+# input). The dashboards have a Region dropdown for the others.
 cloudwatch_default_region: ap-southeast-2
-# cloudwatch_uid: lighthouse-cw-management     # a fixed name chosen by convention, nobody issues it; keep the default
+cloudwatch_uid: 8s123msinglish     # the uid of the CloudWatch data source that exists in Grafana and that the dashboards name; keep it
 
 # --- AWS identity of the Grafana service (Managed Identity federation) --------------------------------------
 # Needed while aws_federation_enabled is true (it follows cloudwatch_enabled). The Azure values come from the
@@ -39,6 +39,11 @@ azure_mi_client_id: "<client id of the Managed Identity>"
 # The audience of the token: the Application ID URI of the Entra app registration made for AWS. It must be the same
 # value as grafana_azure_audience in environment/shr-grafana-federation.
 azure_audience: "api://aws-sts"
+# Optional but recommended: the object (principal) ID of the same Managed Identity (az identity show --query principalId,
+# the same value as grafana_azure_subject in the AWS stack). When set, the role stops before it touches Grafana if the
+# token's sub claim is another identity.
+azure_mi_object_id: "<object (principal) id of the Managed Identity>"
+# aws_sts_check_enabled: true     # one call to AWS STS with the token before Grafana is restarted; false to skip it
 
 # --- Secret -------------------------------------------------------------------------------------------------
 # grafana_admin_password: the admin password of the Grafana server (the one you log in with, or the

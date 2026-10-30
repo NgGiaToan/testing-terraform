@@ -12,9 +12,9 @@ terraform {
     }
   }
 
-  # Account-wide security/capacity alerting (GuardDuty, Security Hub, Access Analyzer,
-  # service quotas) — same convention as shr-iam/shr-backup-dr: account-level, rarely
-  # changes, applied manually by an admin, not from CI.
+  # Account-wide security alerting (GuardDuty, Security Hub, Access Analyzer) — same
+  # convention as shr-iam/shr-backup-dr: account-level, rarely changes, applied manually by
+  # an admin, not from CI. Service quotas are monitored by shr-monitoring.
   backend "s3" {
     bucket       = "testing-terraform-tfstate"
     key          = "shr-security-alerts/terraform.tfstate"

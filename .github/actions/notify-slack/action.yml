@@ -1,0 +1,43 @@
+name: "Notify Slack"
+description: "Post a pre-formatted summary message to a Slack channel via Incoming Webhook"
+
+inputs:
+  webhook-url:
+    description: "Slack Incoming Webhook URL (e.g. secrets.SLACK_WEBHOOK_URL)"
+    required: true
+  title:
+    description: "Title line for the message (e.g. workflow name + PR/commit context)"
+    required: true
+  title-link:
+    description: "URL the title links to (e.g. the PR or commit) — omit for no link"
+    required: false
+    default: ""
+  summary:
+    description: "Body of the message — typically one status line per job"
+    required: true
+  color:
+    description: "Attachment color bar — 'good' (green), 'warning' (yellow), 'danger' (red), or a hex code like '#ff0000'"
+    required: false
+    default: "good"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Post to Slack
+      shell: bash
+      env:
+        WEBHOOK_URL: ${{ inputs.webhook-url }}
+        TITLE: ${{ inputs.title }}
+        TITLE_LINK: ${{ inputs.title-link }}
+        SUMMARY: ${{ inputs.summary }}
+        COLOR: ${{ inputs.color }}
+      run: |
+        payload=$(jq -n --arg title "$TITLE" --arg link "$TITLE_LINK" --arg summary "$SUMMARY" --arg color "$COLOR" '{
+          attachments: [
+            (
+              { color: $color, title: $title, text: $summary }
+              + (if $link != "" then { title_link: $link } else {} end)
+            )
+          ]
+        }')
+        curl -sf -X POST -H "Content-type: application/json" --data "$payload" "$WEBHOOK_URL"

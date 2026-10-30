@@ -22,7 +22,7 @@ resource "aws_cloudwatch_metric_alarm" "status_check" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "https_canary" {
-  count               = var.https_availability_canary_name != null ? 1 : 0
+  count               = local.https_canary_enabled ? 1 : 0
   alarm_name          = local.alarm_names["https-canary"]
   alarm_description   = local.alarm_descriptions["https-canary"]
   namespace           = "CloudWatchSynthetics"
@@ -44,11 +44,6 @@ resource "aws_cloudwatch_metric_alarm" "alb_healthy" {
   count               = local.alb_enabled ? 1 : 0
   alarm_name          = local.alarm_names["alb-healthy"]
   alarm_description   = local.alarm_descriptions["alb-healthy"]
-  namespace           = "AWS/ApplicationELB"
-  metric_name         = "UnHealthyHostCount"
-  dimensions          = { LoadBalancer = var.alb_arn_suffix, TargetGroup = var.target_group_arn_suffix }
-  statistic           = "Minimum"
-  period              = 60
   evaluation_periods  = 3
   datapoints_to_alarm = 3
   threshold           = 1
@@ -57,6 +52,36 @@ resource "aws_cloudwatch_metric_alarm" "alb_healthy" {
   alarm_actions       = local.alarm_actions["alb-healthy"]
   ok_actions          = local.alarm_actions["alb-healthy"]
   tags                = local.common_tags
+
+  lifecycle {
+    precondition {
+      condition     = length(local.alb_target_groups) > 0
+      error_message = "target_group_arn_suffix is empty: this alarm needs at least one target group."
+    }
+  }
+
+  # One metric per target group, added up with "+": the sum is at least 1 as soon as any group
+  # has an unhealthy host, which is what raises the alarm.
+  dynamic "metric_query" {
+    for_each = local.alb_target_groups
+    content {
+      id = metric_query.key
+      metric {
+        namespace   = "AWS/ApplicationELB"
+        metric_name = "UnHealthyHostCount"
+        dimensions  = { LoadBalancer = var.alb_arn_suffix, TargetGroup = metric_query.value }
+        stat        = "Minimum"
+        period      = 60
+      }
+    }
+  }
+
+  metric_query {
+    id          = "worst"
+    expression  = join("+", sort(keys(local.alb_target_groups)))
+    label       = "UnHealthyHostCount (all target groups)"
+    return_data = true
+  }
 }
 
 # (Target 5xx + ELB 5xx) / requests x 100. Evaluated only when the minute had at least
@@ -116,7 +141,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "workflow_canary" {
-  count               = var.synthetics_canary_name != null ? 1 : 0
+  count               = local.workflow_canary_enabled ? 1 : 0
   alarm_name          = local.alarm_names["workflow-canary"]
   alarm_description   = local.alarm_descriptions["workflow-canary"]
   namespace           = "CloudWatchSynthetics"
@@ -162,11 +187,6 @@ resource "aws_cloudwatch_metric_alarm" "vpn_healthy" {
   count               = local.nlb_enabled ? 1 : 0
   alarm_name          = local.alarm_names["vpn-healthy"]
   alarm_description   = local.alarm_descriptions["vpn-healthy"]
-  namespace           = "AWS/NetworkELB"
-  metric_name         = "UnHealthyHostCount"
-  dimensions          = { LoadBalancer = var.nlb_arn_suffix, TargetGroup = var.nlb_target_group_arn_suffix }
-  statistic           = "Maximum"
-  period              = 60
   evaluation_periods  = 3
   datapoints_to_alarm = 3
   threshold           = 1
@@ -175,6 +195,36 @@ resource "aws_cloudwatch_metric_alarm" "vpn_healthy" {
   alarm_actions       = local.alarm_actions["vpn-healthy"]
   ok_actions          = local.alarm_actions["vpn-healthy"]
   tags                = local.common_tags
+
+  lifecycle {
+    precondition {
+      condition     = length(local.nlb_target_groups) > 0
+      error_message = "nlb_target_group_arn_suffix is empty: this alarm needs at least one target group."
+    }
+  }
+
+  # One metric per target group, added up with "+": the sum is at least 1 as soon as any group
+  # has an unhealthy host, which is what raises the alarm.
+  dynamic "metric_query" {
+    for_each = local.nlb_target_groups
+    content {
+      id = metric_query.key
+      metric {
+        namespace   = "AWS/NetworkELB"
+        metric_name = "UnHealthyHostCount"
+        dimensions  = { LoadBalancer = var.nlb_arn_suffix, TargetGroup = metric_query.value }
+        stat        = "Maximum"
+        period      = 60
+      }
+    }
+  }
+
+  metric_query {
+    id          = "worst"
+    expression  = join("+", sort(keys(local.nlb_target_groups)))
+    label       = "UnHealthyHostCount (all target groups)"
+    return_data = true
+  }
 }
 
 resource "aws_cloudwatch_metric_alarm" "vpn_connections" {
@@ -190,16 +240,33 @@ resource "aws_cloudwatch_metric_alarm" "vpn_connections" {
   ok_actions          = local.alarm_actions["vpn-connections"]
   tags                = local.common_tags
 
+  lifecycle {
+    precondition {
+      condition     = length(local.nlb_target_groups) > 0
+      error_message = "nlb_target_group_arn_suffix is empty: this alarm needs at least one target group."
+    }
+  }
+
+  # One metric per target group; the connections of all of them are added up.
+  dynamic "metric_query" {
+    for_each = local.nlb_target_groups
+    content {
+      id = metric_query.key
+      metric {
+        namespace   = "AWS/NetworkELB"
+        metric_name = "ActiveFlowCount"
+        dimensions  = { LoadBalancer = var.nlb_arn_suffix, TargetGroup = metric_query.value }
+        stat        = "Average"
+        period      = 300
+      }
+    }
+  }
+
   metric_query {
     id          = "flows"
+    expression  = join("+", sort(keys(local.nlb_target_groups)))
+    label       = "ActiveFlowCount (all target groups)"
     return_data = true
-    metric {
-      namespace   = "AWS/NetworkELB"
-      metric_name = "ActiveFlowCount"
-      dimensions  = { LoadBalancer = var.nlb_arn_suffix, TargetGroup = var.nlb_target_group_arn_suffix }
-      stat        = "Average"
-      period      = 300
-    }
   }
 
   metric_query {
@@ -213,7 +280,7 @@ resource "aws_cloudwatch_metric_alarm" "vpn_connections" {
 # --- Web protection & certificates -----------------------------------------------------
 
 resource "aws_cloudwatch_metric_alarm" "waf_blocked" {
-  count               = var.waf_web_acl_name != null ? 1 : 0
+  count               = local.waf_enabled ? 1 : 0
   alarm_name          = local.alarm_names["waf-blocked"]
   alarm_description   = local.alarm_descriptions["waf-blocked"]
   evaluation_periods  = 2
@@ -253,7 +320,7 @@ resource "aws_cloudwatch_metric_alarm" "waf_blocked" {
 # 45 days out, so either alarm firing means renewal is failing. Missing data breaches: a
 # certificate that stops reporting should not look healthy.
 resource "aws_cloudwatch_metric_alarm" "cert_warning" {
-  count               = var.acm_certificate_arn != null ? 1 : 0
+  count               = local.acm_enabled ? 1 : 0
   alarm_name          = local.alarm_names["cert-warning"]
   alarm_description   = local.alarm_descriptions["cert-warning"]
   namespace           = "AWS/CertificateManager"
@@ -272,7 +339,7 @@ resource "aws_cloudwatch_metric_alarm" "cert_warning" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "cert_critical" {
-  count               = var.acm_certificate_arn != null ? 1 : 0
+  count               = local.acm_enabled ? 1 : 0
   alarm_name          = local.alarm_names["cert-critical"]
   alarm_description   = local.alarm_descriptions["cert-critical"]
   namespace           = "AWS/CertificateManager"

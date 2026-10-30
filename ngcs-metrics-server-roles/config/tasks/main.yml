@@ -19,6 +19,14 @@
       grafana_admin_password. See README.md.
     quiet: true
 
+# First, because it checks the token before it changes anything of Grafana: when a check fails the play stops here and
+# the data source file below is not written.
+- name: AWS identity of the Grafana service (web identity federation)
+  ansible.builtin.include_tasks: aws_federation.yml
+  when: aws_federation_enabled | bool
+
+# This file replaces datasources.yaml and has prune: true: a data source of that provisioning that is not in the file
+# is deleted at the next reload or restart. Read the README (Before the first run on a Grafana that is in use).
 - name: Render Grafana datasources
   ansible.builtin.template:
     src: datasources.yaml.j2
@@ -27,7 +35,3 @@
     group: "{{ grafana_group }}"
     mode: "0640"
   notify: Reload grafana datasources
-
-- name: AWS identity of the Grafana service (web identity federation)
-  ansible.builtin.include_tasks: aws_federation.yml
-  when: aws_federation_enabled | bool

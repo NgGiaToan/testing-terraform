@@ -1,13 +1,9 @@
 ---
-# Handlers run in the order written here: systemd first, then the token, then Grafana, then the data sources.
+# Handlers run at the end of the play, in the order written here: systemd first, then Grafana, then the data sources.
+# The token is not a handler: tasks/aws_federation.yml fetches and checks it BEFORE Grafana is touched.
 - name: Reload systemd
   ansible.builtin.systemd:
     daemon_reload: true
-
-- name: Fetch AWS token
-  ansible.builtin.systemd:
-    name: grafana-aws-token.service
-    state: started
 
 - name: Restart grafana
   ansible.builtin.systemd:

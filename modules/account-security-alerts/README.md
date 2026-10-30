@@ -1,8 +1,11 @@
 # account-security-alerts
 
-Account-wide security/capacity alerting: GuardDuty, Security Hub, IAM Access Analyzer, and
-service quotas. Apply this **once per account**, not once per customer — these findings
-have no Customer/Environment tag to scope by, unlike `modules/customer-monitoring`.
+Account-wide security alerting: GuardDuty, Security Hub and IAM Access Analyzer. Apply this
+**once per account**, not once per customer — these findings have no Customer/Environment tag
+to scope by, unlike `modules/customer-monitoring`.
+
+Service quotas are **not** monitored here: `modules/alert-delivery` does it (the
+`quota-80` / `quota-95` alarms).
 
 ## Usage
 
@@ -19,11 +22,6 @@ module "account_security_alerts" {
   SNS topic → the Slack Lambda. Security Hub and Access Analyzer need to already be
   enabled in this account/region — the EventBridge rules match on their event shape but
   don't turn the services on.
-- **Service quotas** (`service_quota_checks`) are plain CloudWatch alarms on the
-  `AWS/Usage` namespace, which only populates once "Monitor with CloudWatch" is turned on
-  per quota in the Service Quotas console — Terraform has no resource to flip that toggle.
-  Confirm the real dimensions via `aws cloudwatch list-metrics --namespace AWS/Usage`
-  before trusting the defaults in the variable description.
 
 ## Known simplifications
 

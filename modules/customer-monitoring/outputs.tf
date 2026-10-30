@@ -1,15 +1,10 @@
 output "alert_topic_arns" {
-  description = "Priority topic ARNs keyed P1/P2/P3"
-  value       = { for p, t in aws_sns_topic.alerts : p => t.arn }
-}
-
-output "pipeline_topic_arn" {
-  description = "Topic for alert-delivery failures (email to Engineering, independent of the formatter Lambda)"
-  value       = aws_sns_topic.pipeline.arn
+  description = "Priority => ARN of the management-account topic this account's alarms publish to (empty when no management_account_id is set)"
+  value       = local.central_alert_topic_arns
 }
 
 output "alarm_names" {
-  description = "Alert key → alarm name (<customer>-<priority>-<alert-key>) for every alert in the catalogue"
+  description = "Alert key → alarm name (<customer>-<priority>-<alert environment>-<alert-key>) for every alert in the catalogue"
   value       = local.alarm_names
 }
 
@@ -18,7 +13,10 @@ output "cloudwatch_agent_config_ssm_parameter" {
   value       = local.instance_enabled ? aws_ssm_parameter.cloudwatch_agent_config[0].name : null
 }
 
+# DISABLED (the Grafana role is not used): see modules/customer-monitoring/grafana.tf.
+/*
 output "grafana_role_arn" {
   description = "ARN of the read-only role to enter as `Assume Role ARN` in this customer's Grafana CloudWatch data source"
   value       = local.grafana_enabled ? aws_iam_role.grafana_read[0].arn : null
 }
+*/

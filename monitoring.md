@@ -6,38 +6,26 @@ Monitoring and alerting standard for every hosted Lighthouse customer environmen
 
 ## Overview
 
-This section shows how monitoring data flows from the customer and management accounts to Slack, and lists the components and metrics that are monitored.
+This section shows how monitoring data flows from the AWS account to Slack, and lists the components and metrics that are monitored.
 
 ```mermaid
 flowchart TD
-  subgraph CUST["Customer account"]
+  subgraph ACC["AWS account (customers and monitoring)"]
     direction TB
-    CS["Metric sources<br/>CloudWatch Agent, Synthetics canaries,<br/>EC2/ALB/NLB/WAF/ACM metrics, backup metric"]
+    CS["Metric sources<br/>CloudWatch Agent, Synthetics canaries,<br/>EC2/ALB/NLB/WAF/ACM metrics, backup metric,<br/>Network Firewall metrics, quota metric"]
     CW["CloudWatch"]
-    GF["Grafana (our team only)<br/>assumes a read-only role<br/>in this account"]
-    CA["Alarms"]
-    CSNS["SNS topics<br/>One per priority"]
+    CA["Alarms<br/>customers and shared components"]
+    BUD["AWS Budgets and Cost Anomaly Detection<br/>Per customer (Instance tag)"]
+    SNS["SNS topics<br/>One per priority, per environment and region"]
     CS --> CW
-    CW --> GF
     CW --> CA
-    CA --> CSNS
+    CA --> SNS
+    BUD --> SNS
   end
 
-  subgraph MGMT["Management account"]
-    direction TB
-    MS["Metric sources<br/>Network Firewall metrics, quota metric"]
-    MCW["CloudWatch"]
-    MA["Alarms"]
-    BUD["AWS Budgets<br/>Per customer account"]
-    MSNS["SNS topics"]
-    MS --> MCW
-    MCW --> MA
-    MA --> MSNS
-    BUD --> MSNS
-  end
-
-  CSNS --> LAM["Lambda"]
-  MSNS --> LAM
+  GF["Grafana (our team only)<br/>assumes a read-only role"]
+  CW --> GF
+  SNS --> LAM["Lambda"]
   LAM --> SLK["Slack"]
   SLK --> OPS["Operations"]
 ```
@@ -50,16 +38,16 @@ flowchart TD
 | Application Load Balancer (ALB, private) | `UnHealthyHostCount`, `TargetResponseTime` (p95), `RequestCount` (request rate), `HTTPCode_Target_5XX_Count`, `HTTPCode_ELB_5XX_Count` |
 | Network Load Balancer (NLB, public) | `UnHealthyHostCount`, `ActiveFlowCount` (both for the OpenVPN target group) |
 | AWS WAF (on the ALB) | `BlockedRequests` |
-| AWS Network Firewall (shared, Management VPC, management account) | `DroppedPackets` |
+| AWS Network Firewall (shared, Management VPC) | `DroppedPackets` |
 | ACM certificates | `DaysToExpiry` |
 | Customer domain (DNS, TLS, HTTP) | `SuccessPercent` (HTTPS canary on port 443, expects HTTP 200) |
 | Lighthouse application | `SuccessPercent` (workflow canary) |
 | Daily AMI snapshots | `SnapshotSucceeded` (custom metric) |
-| Monitoring pipeline (Lambda, management account) | `Errors`, `Throttles` |
-| Monitoring pipeline (SNS topics, each customer account) | `NumberOfNotificationsFailed` |
-| Management account, per region (VPCs, Elastic IPs) | `QuotaUsagePercent` (custom metric: usage as a percentage of the service quota) |
-| Cost per customer (visibility) | Monthly cost by customer account (linked account) and by `CostCenter` tag (Cost Explorer, not a CloudWatch metric) |
-| Cost per customer (budget alerts) | Monthly actual and forecasted cost, filtered by the customer's linked account (AWS Budgets, not a CloudWatch metric) |
+| Monitoring pipeline (alert delivery Lambda) | `Errors`, `Throttles` |
+| Monitoring pipeline (SNS alert topics) | `NumberOfNotificationsFailed` |
+| Shared quotas, per region (AWS WAF: web ACLs, rule groups, IP sets, regex pattern sets; others only if AWS publishes a usage metric) | `AWS/Usage` `ResourceCount` (published by AWS, no Lambda); usage % = `ResourceCount / limit × 100` (metric math; `SERVICE_QUOTA()` instead of the fixed limit where the service supports it) |
+| Cost per customer (visibility) | Monthly cost by `Instance` tag, viewed in Cost Explorer in the Billing console (not a CloudWatch metric) |
+| Cost per customer (budget alerts) | Monthly actual and forecasted cost, filtered by the customer's `Instance` tag (AWS Budgets), and cost anomalies per customer (Cost Anomaly Detection). Neither is a CloudWatch metric |
 
 ## Monitoring Categories
 
@@ -124,51 +112,88 @@ These EBS metrics have no alarm. They are shown on the [Grafana](#grafana-dashbo
 
 ### Platform Health & Capacity
 
-Backups, quota limits of the management account, and the alert delivery path itself. The backup alarms and the alarms on the SNS topics of each customer account live in the customer account; the Lambda formatter and its alarms live in the management account. A failure in the Lambda or SNS would silence every other alert, so the pipeline alerts must reach Engineering through a path that does not depend on the Lambda formatter (see Pipeline alarms in [Alarm Configuration Reference Settings](#alarm-configuration-reference-settings)).
+Backups, shared quota limits, and the alert delivery path itself. The alert delivery Lambda, the alert topics and the alarms on them belong to the monitoring deployment of each environment and region. A failure in the Lambda or SNS would silence every other alert, so the pipeline alerts should reach Engineering through a path that does not depend on the alert delivery Lambda.
 
 | Metric | Namespace & Dimensions | Trigger | Customer Impact | Priority | Notify | Response Action | Why It Matters |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `SnapshotSucceeded` (AMI snapshot) | `Lighthouse/Backup` (custom); `Customer` | Sum, 1 h; 25 of 25 < 1 (P1); missing: breaching | Recovery point at risk | P1 (25 h) | Engineering | Check job errors, IAM permissions and snapshot quota; rerun the job | Failed backups must be noticed |
-| `QuotaUsagePercent` (VPCs, Elastic IPs of the management account, per region) | `Lighthouse/Quotas` (custom); `Quota` | Max, 300 s; 1 of 1 > 80 (P3), > 95 (P2); missing: not breaching (the quota job's own `Errors` alarm covers a stopped job) | New customers cannot be provisioned | P3 (80%), P2 (95%) | Operations, Engineering | Request a quota increase | These quotas are regional and held by the management account, so one limit affects every customer |
-| `Errors` (Lambda) | `AWS/Lambda`; `FunctionName` | Sum, 300 s; 1 of 1 ≥ 1; missing: not breaching | Alerts may not reach Slack | P2 | Engineering | Check the Lambda logs; fix the formatter or the Slack credentials | Unformatted alerts are lost |
+| Quota usage % (AWS WAF web ACLs, rule groups, IP sets, regex pattern sets per region; more in `var.quotas`) | `AWS/Usage`; the dimensions of each usage metric (WAF: `Resource`) | Max, 300 s; usage / limit × 100; 1 of 1 > 80 (P3), > 95 (P2); missing: not breaching | New customers cannot be provisioned | P3 (80%), P2 (95%) | Operations, Engineering | Request a quota increase | These quotas are regional and shared by the account, so one limit affects every customer |
+| `Errors` (Lambda) | `AWS/Lambda`; `FunctionName` | Sum, 300 s; 1 of 1 ≥ 1; missing: not breaching | Alerts may not reach Slack | P2 | Engineering | Check the Lambda logs; fix the Lambda or the Slack credentials | Unformatted alerts are lost |
 | `Throttles` (Lambda) | `AWS/Lambda`; `FunctionName` | Sum, 300 s; 1 of 1 ≥ 1; missing: not breaching | Alerts delayed or dropped | P2 | Engineering | Check the Lambda concurrency and alert volume | Throttling drops alerts |
-| `NumberOfNotificationsFailed` (SNS) | `AWS/SNS`; `TopicName` (each priority topic, in each customer account) | Sum, 300 s; 1 of 1 ≥ 1; missing: not breaching | Alerts not delivered to the Lambda | P2 | Engineering | Check the subscription, permissions and topic policy | Confirms SNS reached the Lambda |
+| `NumberOfNotificationsFailed` (SNS) | `AWS/SNS`; `TopicName` (each priority topic of the deployment) | Sum, 300 s; 1 of 1 ≥ 1; missing: not breaching | Alerts not delivered to the Lambda | P2 | Engineering | Check the subscription, permissions and topic policy | Confirms SNS reached the Lambda |
 
 ### Cost Monitoring
 
+Cost is split per customer by the `Instance` tag. Every resource of a customer carries it, and its value is different for each customer (`CostCenter` is shared between customers, so it is not used). The tag must be **active** in Billing. If it is not active, budgets show zero cost and never alert.
+
+An administrator creates one budget and one cost anomaly monitor per customer. Alerts reach Slack (Operations) through the same SNS topics and Lambda as the alarms.
+
+```mermaid
+flowchart LR
+  TAG["Resources carry<br/>the Instance tag"] --> BILL["Tag is active<br/>in Billing"]
+  BILL --> BUD["Budget<br/>per customer"]
+  BILL --> ANO["Anomaly monitor<br/>per customer"]
+  BUD --> SNS["SNS topic<br/>P3 or P2"]
+  ANO --> SNS
+  SNS --> LAM["Lambda"]
+  LAM --> SLK["Slack: Operations"]
+```
+
 #### Visibility
 
-to be defined
+Cost visibility needs no code. Use **Cost Explorer** in the AWS Billing and Cost Management console.
+
+1. Check that the `Instance` tag is **Active** under **Cost allocation tags**.
+2. Open **Cost Explorer**. Set the date range and **Monthly** granularity.
+3. Set **Group by** to **Tag**, then `Instance`. Each line is one customer. A line with an empty tag is cost that has no tag.
+4. To see one customer, add a **Filter** on **Tag**, `Instance`, and the customer's value.
+5. Choose **Save as** to keep the report.
+
+Use the payer account, or this account if it stands alone. Menu names may differ a little in the console.
 
 #### Budget alerts
 
-to be defined
+| Metric | Namespace & Dimensions | Trigger | Customer Impact | Priority | Notify | Response Action | Why It Matters |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Budget, actual cost (80%) | AWS Budgets; filter on the customer's `Instance` tag | Monthly. Actual cost above 80% of the budget | None; cost risk | P3 | Operations | Check the spend by tag in Cost Explorer | Early warning |
+| Budget, forecast | AWS Budgets; same filter | Forecast above 100% of the budget | None; cost risk | P3 | Operations | Compare forecast and budget; adjust if needed | Warns before overspend |
+| Budget, actual cost (100%) | AWS Budgets; same filter | Actual cost above 100% of the budget | None; budget spent | P2 | Operations | Find the cause; confirm with the customer owner | Budget is already spent |
+| Cost anomaly | AWS Cost Anomaly Detection; one monitor per customer on the `Instance` tag | Anomaly of at least USD 100 (default, can be set per customer), sent at once | None; unusual spend | P3 | Operations | Open the anomaly to see the service behind it | Catches sudden cost changes |
+
+How it is set up:
+
+- The administrator lists each customer with its `Instance` tag value, its monthly budget in USD and, if wanted, its own anomaly threshold. Only listed customers get a budget.
+- Names are `<environment>-<customer>-monthly-budget` and `<environment>-<customer>-cost-anomaly-monitor`.
+- Alerts use the P3 and P2 topics. Budget and anomaly messages name no team, so they go to Operations.
+- Set the customers in **one** deployment per environment. Budgets are account-wide.
+- A new tag takes up to 2 days to work (up to 24 hours to appear, then up to 24 hours to activate).
+- Cost with no tag (some services, shared charges) belongs to no customer.
 
 ## Grafana Dashboards
 
 Grafana is an internal tool for the Operations and Engineering teams. Customers have no access to Grafana or to its data. It gives the team one place to view every customer, with CloudWatch as the data source for all metrics and alarms.
 
-- **Access to each customer account:** Terraform creates a read-only IAM role in the customer's account at provisioning. It grants CloudWatch read permissions only, with no write permission and no access to other services, and its trust policy allows only the Grafana account, with an external ID.
-- **Data sources:** Grafana has one CloudWatch data source per customer account, which assumes that role (`Assume Role ARN`). Nothing is shared between customer accounts.
-- **Management account:** one more data source, with its own read-only role in the management account, serves the panels that are not per customer: the Network Firewall (`DroppedPackets`, `PassedPackets`), the quota usage and the Lambda formatter. Those panels sit in the same dashboards as the customer panels and use this data source instead of the Customer filter.
-- **Customer filter:** every dashboard has a **Customer** filter at the top for the team. It selects the customer's data source; it is not a customer login.
+- **Access to AWS:** Grafana runs on an Azure VM and reads this AWS account with one read-only IAM role. The VM's Azure Managed Identity proves its identity to AWS through OIDC federation, so no access key is stored. The role grants CloudWatch read, discovery of resources by tag (`ec2:DescribeInstances`, `tag:GetResources`) and `logs:DescribeLogGroups` only, with no write permission. The role is created once for the account, not per customer.
+- **Data source:** one CloudWatch data source reads the whole account: every customer and the shared components. It is created in the Grafana UI with the AWS SDK default credentials.
+- **Filters:** every dashboard except Platform has three filters at the top: **Region**, **Environment** and **Instance**. Region, Environment and Instance list the values of the tags `region`, `Environment` and `Instance` of the EC2 instances. The defaults are `ap-southeast-2`, `production` and all instances. Platform has Region and a fixed Environment list (dev, stg, prd) because the Lambda and SNS names are per environment. The filters are for the team; they are not a customer login.
+- **Metric tags:** the panels filter metrics by the dimensions `Environment`, `Instance` and `region`, so the metrics of a customer must carry these dimensions (CloudWatch does not add the tags of a resource to its metrics by itself). The Network Firewall panels read the shared firewall and are not filtered by tag.
 
 | Dashboard | Purpose | Panels |
 | --- | --- | --- |
 | Environment Overview | Status, active alerts, uptime, health checks | Uptime % over 24 h / 7 d / 30 d (average of the HTTPS canary `SuccessPercent`), HTTPS canary and workflow canary results |
-| Infrastructure | Instance health and capacity | EC2 status checks, CPU, memory, disk used %, disk read/write (bytes and operations), network in/out, CloudWatch agent heartbeat |
+| Infrastructure | Instance health and capacity | EC2 status checks, CPU, memory, disk used %, disk read/write (bytes and operations, per instance and per EBS volume), network in/out, CloudWatch agent heartbeat |
 | Remote Access | OpenVPN availability | NLB healthy targets per target group, active VPN connections, new connections per hour |
 | Application | Lighthouse application health | HTTPS canary status (200 or failure reason), ALB response time, ALB request rate, ALB 5xx rate, healthy targets, synthetic canary results |
 | Web Protection | WAF, firewall and certificates | WAF allowed vs blocked requests, blocked requests by rule group, Network Firewall passed vs dropped packets, certificate days to expiry per customer |
-| Platform | Management-account quotas (not per customer), backups and alert delivery | VPC and Elastic IP quota usage %, last successful AMI snapshot per customer, Lambda errors and throttles, SNS failures |
+| Platform | Management-account quotas (not per customer), backups and alert delivery | WAF quota usage % (web ACLs, rule groups, IP sets, regex pattern sets), last successful AMI snapshot per customer, Lambda errors and throttles, SNS failures |
 
 **Conventions**
 
 - Where an alarm exists for a metric, its thresholds are drawn on the panel (e.g. CPU warning at 70%, critical at 90%), so operators see how close a metric is to alerting. Some panels, such as blocked requests by rule group, are for investigation and have no alarm.
 - Colours follow priority: red for P1/critical, orange for P2/warning, yellow for P3.
-- Every alert message links to the Environment Overview dashboard filtered to the affected customer.
-- The quota, firewall and Lambda formatter panels belong to the management account and have no customer filter; the SNS delivery panel follows the Customer filter.
-- Most CloudWatch metrics have no `Customer` dimension, so the Customer filter selects the customer's account data source; nothing is shared between customer accounts.
+- Every alert message carries a link to the dashboards (`dashboard_url`, one fixed link set per deployment). The link is not yet filtered to the affected customer.
+- The quota, firewall, alert delivery Lambda and SNS delivery panels belong to the shared monitoring and are not filtered by Instance.
+- Most CloudWatch metrics have no `Customer` dimension, so the customer is told apart by the tag dimensions `Environment`, `Instance` and `region` (see Metric tags above).
 - A few panels show metrics that have no alarm and are not in the component table: `HealthyHostCount` of the ALB and the NLB (healthy targets), `NetworkIn` (network in/out), `NewFlowCount` (new connections per hour), `AllowedRequests` (WAF allowed vs blocked) and `PassedPackets` (Network Firewall passed vs dropped packets).
 
 ## Alerting
@@ -201,11 +226,11 @@ This section defines how alerts are prioritised, structured, routed to the team 
 ```mermaid
 flowchart LR
   direction LR
-  ALARM["CloudWatch Alarm"]
-  SNS["Amazon SNS"]
+  ALARM["CloudWatch Alarm,<br/>AWS Budget or<br/>Cost Anomaly Detection"]
+  SNS["Amazon SNS<br/>(one topic per priority)"]
   ALARM --> SNS
 
-  LAM["Lambda<br/>(formatter)"]
+  LAM["Lambda<br/>(alert delivery)"]
 
   SNS --> LAM
   LAM --> SLK["Slack Channel"]
@@ -221,14 +246,41 @@ flowchart LR
 
 | Setting | Value |
 | --- | --- |
-| Alarm name | `<customer>-<priority>-<alert-key>`, e.g. `acme-P1-https-canary`. Alarms of the shared components (management account) have no customer: `<priority>-<alert-key>`, e.g. `P3-firewall-drops`. Names must be unique within a region and at most 255 characters |
-| Alert keys | Proposed, to be confirmed: `status-check`, `https-canary`, `alb-healthy`, `alb-5xx`, `workflow-canary`, `ebs-status`, `cpu-warning`, `cpu-critical`, `memory-warning`, `memory-critical`, `disk-warning`, `disk-critical`, `alb-latency`, `alb-request-rate`, `network-egress`, `agent-heartbeat`, `vpn-healthy`, `vpn-connections`, `waf-blocked`, `firewall-drops`, `cert-warning`, `cert-critical`, `backup-25h`, `quota-80`, `quota-95`, `lambda-errors`, `lambda-throttles`, `sns-failures` |
-| Alarm description | JSON with `priority`, `customer`, `alert_type`, `service`, `condition` (the trigger in words, written by the Terraform from the same variables as the alarm) and `dashboard_url`, read by the Lambda to build the Slack message |
-| Alarm actions | `alarm_actions` and `ok_actions` publish to one SNS topic per priority (`alerts-p1`, `alerts-p2`, `alerts-p3`) in the same account and region as the alarm. Each topic delivers to the Lambda formatter of the same region in the management account through a cross-account subscription: the topic's access policy allows the management account to subscribe, and the Lambda's resource policy allows the topic to invoke it. Only the alarm message crosses the account boundary. A topic is encrypted only with a customer-managed KMS key whose policy allows `cloudwatch.amazonaws.com`; the AWS managed key makes the alarm action fail |
+| Alarm name | `<customer>-<priority>-<environment>-<alert-key>`, e.g. `acme-P1-prd-https-canary`, where `<environment>` is the alert environment (`dev`, `stg` or `prd`). It is in the name so that two environments of one customer in the same account and region never overwrite each other's alarms. Alarms of the shared components have no customer: `shared-<priority>-<environment>-<alert-key>`, e.g. `shared-P3-prd-firewall-drops`. Names must be unique within a region and at most 255 characters |
+| Alert keys | `status-check`, `https-canary`, `alb-healthy`, `alb-5xx`, `workflow-canary`, `ebs-status`, `cpu-warning`, `cpu-critical`, `memory-warning`, `memory-critical`, `disk-warning`, `disk-critical`, `alb-latency`, `alb-request-rate`, `network-egress`, `agent-heartbeat`, `vpn-healthy`, `vpn-connections`, `waf-blocked`, `firewall-drops`, `cert-warning`, `cert-critical`, `backup-25h`, `quota-80`, `quota-95`, `lambda-errors`, `lambda-throttles`, `sns-failures` |
+| Alarm description | JSON with `priority`, `customer`, `environment`, `alert_type`, `service`, `condition` (the trigger in words, written by the Terraform from the same variables as the alarm), `dashboard_url` and `notify` (the teams that receive it), read by the Lambda to build the Slack message. Budgets and cost anomalies carry no description: the Lambda takes the priority from the topic and sends them to Operations |
+| Alarm actions | `alarm_actions` and `ok_actions` publish to one SNS topic per priority (`lighthouse-alerting-<environment>-<region>-alerts-p1`, `-p2`, `-p3`) of the monitoring deployment for the alarm's environment and region; CloudWatch cannot publish to a topic of another region. The customer environments have no topic of their own. Each topic's access policy takes alarms of the account by name (the P1 topic takes `*-P1-*`, and so on), and delivers to the alert delivery Lambda of the same environment and region, whose resource policy allows the topic to invoke it. The P2 and P3 topics also take AWS Budgets and Cost Anomaly Detection of this account. A topic is encrypted only with a customer-managed KMS key whose policy allows `cloudwatch.amazonaws.com` (and, for cost alerts, `budgets.amazonaws.com` and `costalerts.amazonaws.com` of this account); the AWS managed key makes the alarm action fail |
+
+### Slack Webhook Secret
+
+The Lambda sends alerts to Slack with webhook URLs. A URL is a password, so it is stored in AWS Secrets Manager, never in Terraform or Git.
+
+Terraform creates an **empty** secret for each environment and region: `lighthouse-alerting-<environment>-<region>-slack-webhooks`. **Adding the URLs is a manual step.** An administrator does it once for each new environment and region. Until then, no alert reaches Slack.
+
+1. In Slack, create an app with **Incoming Webhooks**. Add two webhooks: one for Operations and one for Engineering.
+2. Apply the monitoring deployment. This creates the empty secret.
+3. Add the URLs in the AWS console:
+   1. Open **Secrets Manager** and select the region of the deployment.
+   2. Open the secret `lighthouse-alerting-<environment>-<region>-slack-webhooks`.
+   3. Under **Secret value**, choose **Retrieve secret value**, then **Edit**.
+   4. Choose the **Plaintext** tab, paste the JSON below with your two URLs, and choose **Save**:
+
+      ```json
+      { "Operations": "https://hooks.slack.com/services/...", "Engineering": "https://hooks.slack.com/services/..." }
+      ```
+
+4. Test in the **SNS** console: open the topic `lighthouse-alerting-<environment>-<region>-alerts-p3`, choose **Publish message**, type any text and publish. The message must arrive in the Operations channel.
+
+Good to know:
+
+- Both `Operations` and `Engineering` are required. If one is missing, the Lambda fails. It never sends the alert to another channel.
+- If the secret is still empty, the Lambda fails on every alert. Check its logs in CloudWatch.
+- To change a URL, repeat step 3. The Lambda may use the old URL for a while. To switch at once, change any setting of the Lambda so it restarts.
+- To use a secret that already exists, set `slack_webhook_secret_arn`.
 
 ### Resolution Workflow
 
-1. A CloudWatch alarm or a budget generates an alert.
+1. A CloudWatch alarm, a budget or a cost anomaly generates an alert.
 2. Notification sent to Slack.
 3. Operations is responsible for triaging the issue, including assessing customer impact.
 4. Operations escalates to the appropriate team (for example Engineering) as necessary.

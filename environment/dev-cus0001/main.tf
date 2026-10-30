@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.5.0"
+  required_version = ">= 1.10.0"
 
   required_providers {
     aws = {
@@ -9,20 +9,35 @@ terraform {
   }
 
   backend "s3" {
-    bucket         = "testing-terraform-tfstate"
-    key            = "dev-cus0001/terraform.tfstate"
-    region         = "us-east-1"
-    dynamodb_table = "testing-terraform-tflock"
-    encrypt        = true
+    bucket       = "testing-terraform-tfstate"
+    key          = "dev-cus0001/terraform.tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
+    encrypt      = true
   }
 }
 
 provider "aws" {
-  region = "us-east-1"
+  region = var.region
+
+  # Every resource of this customer carries the cost tags. The budget of modules/cost-monitoring
+  # (environment/shr-monitoring) filters on the Instance tag, which is unique per customer and is not set here: its
+  # value is the instance of this customer in cost_customers, and the tag has to be active in Billing.
+  # CostCenter is not unique per customer, so it is only for grouping.
+  default_tags {
+    tags = {
+      Customer    = local.customer_code
+      Environment = local.environment
+      CostCenter  = local.cost_center
+      ManagedBy   = "terraform"
+    }
+  }
 }
 
 locals {
-  environment = "dev-cus0001"
+  environment   = "dev-cus0001"
+  customer_code = "cus0001"
+  cost_center   = "customer-${local.customer_code}"
 }
 
 resource "aws_s3_bucket" "example" {
